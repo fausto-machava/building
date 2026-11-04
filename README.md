@@ -47,7 +47,7 @@ O utilizador administrador é criado exclusivamente pelo script de seed; não ex
 
 ## Deploy (Vercel + Render)
 
-O repositório inclui `vercel.json` para publicar o website e `render.yaml` para criar a API. Ambos os serviços usam o lockfile da raiz do monorepo. Antes de começar, publique este repositório num remoto Git e tenha uma base de dados MongoDB Atlas acessível pelo serviço Render.
+O repositório inclui `vercel.json` para publicar o website e `render.yaml` para criar a API. Ambos os serviços usam o lockfile da raiz do monorepo. O Blueprint usa o plano gratuito do Render; serviços gratuitos podem suspender-se quando inactivos. Antes de começar, tenha uma base de dados MongoDB Atlas acessível pelo serviço Render.
 
 1. No Render, crie um **Blueprint** a partir do repositório e use o `render.yaml`. Configure `MONGODB_URI` com a ligação Atlas, `JWT_SECRET` com um segredo aleatório forte (por exemplo, gere um com `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`) e `CLIENT_ORIGIN` com o domínio exacto do website Vercel, sem barra final. O Render fornece automaticamente `PORT`.
 2. No Vercel, importe o mesmo repositório mantendo a raiz do projecto na raiz do repositório. Defina `VITE_API_URL` como o URL público da API Render seguido de `/api` (por exemplo, `https://traco-api.onrender.com/api`) e publique.

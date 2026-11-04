@@ -2,7 +2,7 @@ services:
   - type: web
     name: traco-api
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm ci
     startCommand: npm run start -w backend
     healthCheckPath: /api/health
