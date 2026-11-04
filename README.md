@@ -56,7 +56,7 @@ O repositório inclui `vercel.json` para publicar o website e `render.yaml` para
 
 O seed do administrador não é executado automaticamente no deploy. Se a base Atlas já contém o administrador, não volte a executá-lo. Caso ainda não exista, execute `npm run seed:admin -w backend` uma única vez num ambiente ligado à mesma base Atlas e defina `ADMIN_NAME`, `ADMIN_EMAIL` e uma palavra-passe única com pelo menos 12 caracteres nesse ambiente. Não guarde segredos em ficheiros versionados nem os envie no chat. Configure Cloudinary e SMTP no Render apenas se for usar uploads e notificações por email.
 
-Para a lista de acesso de rede do Atlas, permita o acesso de saída do Render conforme as opções disponíveis no plano; restringir por IP é preferível. Não use uma lista de acesso aberta sem compreender o risco. As variáveis marcadas `sync: false` no Blueprint devem ser preenchidas no painel do Render e nunca devem ser adicionadas ao repositório.
+Para a lista de acesso de rede do Atlas, permita o acesso de saída do Render conforme as opções disponíveis no plano; restringir por IP é preferível. Não use uma lista de acesso aberta sem compreender o risco. As variáveis marcadas `sync: false` no Blueprint devem ser preenchidas no painel do Render e nunca devem ser adicionadas ao repositório. Cloudinary e SMTP são opcionais e podem ser configurados depois no painel do serviço.
 
 ## Funcionalidades incluídas
 
