@@ -3,7 +3,7 @@ import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-rout
 import {
   ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Building2, Check,
   ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Compass, FileText,
-  FolderKanban, HardHat, Layers3, LayoutDashboard, LoaderCircle, LockKeyhole,
+  FolderKanban, HardHat, ImagePlus, Layers3, LayoutDashboard, LoaderCircle, LockKeyhole,
   LogOut, Mail, MapPin, Menu, MessageSquareText, Phone, Plus, Search, Send,
   Settings2, ShieldCheck, Sparkles, Users, X,
 } from 'lucide-react'
@@ -97,6 +97,11 @@ function ProjectDetails() {
 
   if (loading) return <div className="project-loading"><LoaderCircle className="spin" /> A carregar projecto...</div>
   if (!project) return <ContentPage eyebrow="PROJECTO NÃO ENCONTRADO" title={<>Este projecto<br /><em>não está disponível.</em></>} text={error}><section className="page-content"><div className="container"><Link className="text-link" to="/projectos"><ArrowLeft size={15} /> Voltar ao portfólio</Link></div></section></ContentPage>
+  const galleryImages = project.gallery?.length
+    ? project.gallery
+    : project.coverImage
+      ? [{ url: project.coverImage, name: project.title || project.name }]
+      : []
 
   return <>
     <section className="project-detail-hero" style={{ backgroundImage: `linear-gradient(90deg, rgb(13 31 50 / 82%), rgb(13 31 50 / 22%)), url("${project.coverImage || fallbackProjects.find(item => item._id === id)?.coverImage || fallbackProjects[0].coverImage}")` }}>
@@ -106,6 +111,12 @@ function ProjectDetails() {
       <div className="container">
         <div className="project-description-grid"><div><span className="eyebrow">CONCEITO DO PROJECTO</span><h2>Desenhado para<br /><em>ser vivido.</em></h2></div><p>{project.description || 'Explore este projecto arquitectónico em 3D. Alterne entre as vistas da planta, exterior e interior e navegue pela cena arrastando o rato ou deslizando no ecrã.'}</p></div>
         <Suspense fallback={<div className="project-loading"><LoaderCircle className="spin" /> A preparar visualização 3D...</div>}><ProjectViewer modelUrl={project.model3d?.url} floorPlanUrl={project.floorPlan?.url} title={project.title || project.name} /></Suspense>
+        <section className="property-gallery" aria-labelledby="property-gallery-title">
+          <div className="property-gallery-heading"><div><span className="eyebrow">GALERIA DO IMÓVEL</span><h2 id="property-gallery-title">Imagens do projecto</h2></div><span>{galleryImages.length} {galleryImages.length === 1 ? 'imagem' : 'imagens'}</span></div>
+          {galleryImages.length > 0
+            ? <div className="property-gallery-grid">{galleryImages.map((image, index) => <a key={`${image.publicId || image.url}-${index}`} href={image.url} target="_blank" rel="noreferrer" aria-label={`Abrir imagem ${index + 1} do projecto em tamanho completo`}><img src={image.url} alt={image.name || `${project.title || project.name} — imagem ${index + 1}`} loading="lazy" /></a>)}</div>
+            : <p className="property-gallery-empty">As imagens deste imóvel estarão disponíveis em breve.</p>}
+        </section>
         <div className="project-detail-cta"><div><span className="eyebrow">GOSTARIA DE CRIAR ALGO SEMELHANTE?</span><h2>Vamos desenhar o seu próximo projecto.</h2></div><Link to="/orcamento" className="button button-dark">Solicitar orçamento <ArrowRight size={15} /></Link></div>
       </div>
     </section>
@@ -260,7 +271,8 @@ function ResourcePage({ resource, title, description, user }) {
   const [showForm, setShowForm] = useState(false)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
-  const [projectAssets, setProjectAssets] = useState({ model: null, floorPlan: null })
+  const [projectAssets, setProjectAssets] = useState({ model: null, floorPlan: null, images: [] })
+  const [uploadingProject, setUploadingProject] = useState('')
   const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '' })
   async function load() {
     setLoading(true); setError('')
@@ -284,19 +296,34 @@ function ResourcePage({ resource, title, description, user }) {
     try {
       const { data } = await api.post(`/${resource}`, payload)
       let successMessage = 'Registo criado com sucesso.'
-      if (resource === 'projects' && (projectAssets.model || projectAssets.floorPlan)) {
-        const files = new FormData()
-        if (projectAssets.model) files.append('model', projectAssets.model)
-        if (projectAssets.floorPlan) files.append('floorPlan', projectAssets.floorPlan)
-        try {
-          await api.post(`/projects/${data.item._id}/3d-assets`, files, { headers: { 'Content-Type': 'multipart/form-data' } })
-        } catch (reason) {
-          successMessage = `Projecto criado, mas os ficheiros não foram carregados: ${getErrorMessage(reason)}`
+      if (resource === 'projects') {
+        const uploadErrors = []
+        if (projectAssets.model || projectAssets.floorPlan) {
+          const assets = new FormData()
+          if (projectAssets.model) assets.append('model', projectAssets.model)
+          if (projectAssets.floorPlan) assets.append('floorPlan', projectAssets.floorPlan)
+          try {
+            await api.post(`/projects/${data.item._id}/3d-assets`, assets, { headers: { 'Content-Type': 'multipart/form-data' } })
+          } catch (reason) {
+            uploadErrors.push(getErrorMessage(reason))
+          }
+        }
+        if (projectAssets.images.length) {
+          const gallery = new FormData()
+          projectAssets.images.forEach(image => gallery.append('images', image))
+          try {
+            await api.post(`/projects/${data.item._id}/gallery`, gallery, { headers: { 'Content-Type': 'multipart/form-data' } })
+          } catch (reason) {
+            uploadErrors.push(getErrorMessage(reason))
+          }
+        }
+        if (uploadErrors.length) {
+          successMessage = `Projecto criado, mas não foi possível carregar todos os ficheiros. ${uploadErrors.join(' ')}`
         }
       }
       setShowForm(false)
       setForm({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '' })
-      setProjectAssets({ model: null, floorPlan: null })
+      setProjectAssets({ model: null, floorPlan: null, images: [] })
       setNotice(successMessage)
       load()
     }
@@ -313,8 +340,28 @@ function ResourcePage({ resource, title, description, user }) {
     try { await api.delete(`/${resource}/${item._id}`); setNotice('Registo arquivado.'); load() }
     catch (reason) { setNotice(getErrorMessage(reason)) }
   }
+  async function uploadProjectImages(item, images) {
+    if (!images.length) return
+    if (images.length > 10) {
+      setNotice('Seleccione no máximo 10 imagens de cada vez.')
+      return
+    }
+    const files = new FormData()
+    images.forEach(image => files.append('images', image))
+    setUploadingProject(item._id)
+    setNotice('')
+    try {
+      await api.post(`/projects/${item._id}/gallery`, files, { headers: { 'Content-Type': 'multipart/form-data' } })
+      setNotice('Imagens adicionadas à galeria do projecto.')
+      load()
+    } catch (reason) {
+      setNotice(getErrorMessage(reason))
+    } finally {
+      setUploadingProject('')
+    }
+  }
   const statuses = ['Novo', 'Em análise', 'Em contacto', 'Enviada', 'Em negociação', 'Aceite', 'Rejeitada', 'Planeamento', 'Em execução', 'Suspenso', 'Concluído']
-  return <><div className="admin-page-heading"><div><span className="eyebrow">GESTÃO COMERCIAL</span><h1>{title}</h1><p>{description}</p></div>{resource !== 'quote-requests' && <button className="button button-dark" onClick={() => setShowForm(!showForm)}>{showForm ? <X size={16} /> : <Plus size={16} />}{showForm ? 'Fechar' : `Adicionar ${title.toLowerCase().replace(/s$/, '')}`}</button>}</div>{notice && <p className="notice">{notice}</p>}{showForm && <form className="form-card admin-create-form" onSubmit={create}><h2>Novo registo</h2><div className="form-fields">{fields.map(([name, label, type, required]) => <label key={name}>{label}<input type={type} required={required} min={type === 'number' ? '0' : undefined} value={form[name] || ''} onChange={e => setForm(current => ({ ...current, [name]: e.target.value }))} /></label>)}</div>{resource === 'projects' && <div className="project-assets-form"><label>Modelo 3D GLB <span>(opcional, máx. 50 MB)</span><input type="file" accept=".glb,model/gltf-binary,application/octet-stream" onChange={event => setProjectAssets(current => ({ ...current, model: event.target.files?.[0] || null }))} /></label><label>Planta técnica <span>(opcional, JPG, PNG ou WebP)</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setProjectAssets(current => ({ ...current, floorPlan: event.target.files?.[0] || null }))} /></label><label className="project-publish-toggle"><input type="checkbox" checked={Boolean(form.isPublished)} onChange={event => setForm(current => ({ ...current, isPublished: event.target.checked }))} /> Publicar no portfólio</label></div>}<button className="button button-dark" disabled={saving}>{saving ? 'A guardar...' : 'Guardar registo'} <Check size={15} /></button></form>}<section className="admin-panel resource-panel"><div className="resource-toolbar"><label className="search-field"><Search size={16} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Pesquisar registos..." /></label>{resource !== 'clients' && <select value={status} onChange={e => setStatus(e.target.value)}><option value="">Todos os estados</option>{statuses.map(item => <option key={item}>{item}</option>)}</select>}</div>{error && <p className="notice error-notice">{error}</p>}{loading ? <div className="loading-state"><LoaderCircle className="spin" /> A carregar registos...</div> : items.length ? <div className="table-scroll"><table><thead><tr><th>Nome / Título</th><th>Contacto / Detalhe</th><th>Data</th><th>Estado</th><th></th></tr></thead><tbody>{items.map(item => <tr key={item._id}><td><strong>{item.name || item.title || item.clientName || '—'}</strong><small>{item.company || item.category || item.constructionType || item.service || ''}</small></td><td>{item.email || item.location || item.amount && `${item.amount.toLocaleString('pt-PT')} MZN` || '—'}</td><td>{item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-PT') : '—'}</td><td>{resource === 'clients' || resource === 'services' ? <span className="status-pill">{item.status || (item.isPublished ? 'Publicado' : 'Activo')}</span> : <select className="status-select" aria-label="Alterar estado" value={item.status || ''} onChange={e => setItemStatus(item, e.target.value)}><option value="" disabled>Definir estado</option>{statuses.map(value => <option key={value}>{value}</option>)}</select>}</td><td><button className="icon-button delete-button" onClick={() => remove(item)} title="Arquivar registo"><X size={15} /></button></td></tr>)}</tbody></table></div> : <div className="empty-list"><ClipboardList /><strong>Sem registos para apresentar</strong><span>Quando existirem registos, poderá geri-los nesta área.</span></div>}</section></>
+  return <><div className="admin-page-heading"><div><span className="eyebrow">GESTÃO COMERCIAL</span><h1>{title}</h1><p>{description}</p></div>{resource !== 'quote-requests' && <button className="button button-dark" onClick={() => setShowForm(!showForm)}>{showForm ? <X size={16} /> : <Plus size={16} />}{showForm ? 'Fechar' : `Adicionar ${title.toLowerCase().replace(/s$/, '')}`}</button>}</div>{notice && <p className="notice">{notice}</p>}{showForm && <form className="form-card admin-create-form" onSubmit={create}><h2>Novo registo</h2><div className="form-fields">{fields.map(([name, label, type, required]) => <label key={name}>{label}<input type={type} required={required} min={type === 'number' ? '0' : undefined} value={form[name] || ''} onChange={e => setForm(current => ({ ...current, [name]: e.target.value }))} /></label>)}</div>{resource === 'projects' && <div className="project-assets-form"><label>Modelo 3D GLB <span>(opcional, máx. 50 MB)</span><input type="file" accept=".glb,model/gltf-binary,application/octet-stream" onChange={event => setProjectAssets(current => ({ ...current, model: event.target.files?.[0] || null }))} /></label><label>Planta técnica <span>(opcional, JPG, PNG ou WebP)</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setProjectAssets(current => ({ ...current, floorPlan: event.target.files?.[0] || null }))} /></label><label>Imagens do imóvel <span>(até 10 por vez, JPG, PNG ou WebP; máx. 10 MB cada)</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => { const images = Array.from(event.target.files || []); if (images.length > 10) { setNotice('Seleccione no máximo 10 imagens de cada vez.'); event.target.value = ''; return }; setNotice(''); setProjectAssets(current => ({ ...current, images })) }} /></label><label className="project-publish-toggle"><input type="checkbox" checked={Boolean(form.isPublished)} onChange={event => setForm(current => ({ ...current, isPublished: event.target.checked }))} /> Publicar no portfólio</label></div>}<button className="button button-dark" disabled={saving}>{saving ? 'A guardar...' : 'Guardar registo'} <Check size={15} /></button></form>}<section className="admin-panel resource-panel"><div className="resource-toolbar"><label className="search-field"><Search size={16} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Pesquisar registos..." /></label>{resource !== 'clients' && <select value={status} onChange={e => setStatus(e.target.value)}><option value="">Todos os estados</option>{statuses.map(item => <option key={item}>{item}</option>)}</select>}</div>{error && <p className="notice error-notice">{error}</p>}{loading ? <div className="loading-state"><LoaderCircle className="spin" /> A carregar registos...</div> : items.length ? <div className="table-scroll"><table><thead><tr><th>Nome / Título</th><th>Contacto / Detalhe</th><th>Data</th><th>Estado</th><th></th></tr></thead><tbody>{items.map(item => <tr key={item._id}><td><strong>{item.name || item.title || item.clientName || '—'}</strong><small>{item.company || item.category || item.constructionType || item.service || ''}</small></td><td>{item.email || item.location || item.amount && `${item.amount.toLocaleString('pt-PT')} MZN` || '—'}</td><td>{item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-PT') : '—'}</td><td>{resource === 'clients' || resource === 'services' ? <span className="status-pill">{item.status || (item.isPublished ? 'Publicado' : 'Activo')}</span> : <select className="status-select" aria-label="Alterar estado" value={item.status || ''} onChange={e => setItemStatus(item, e.target.value)}><option value="" disabled>Definir estado</option>{statuses.map(value => <option key={value}>{value}</option>)}</select>}</td><td>{resource === 'projects' && <label className={`icon-button project-image-upload${uploadingProject === item._id ? ' uploading' : ''}`} title="Adicionar imagens do imóvel"><input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={uploadingProject === item._id} onChange={event => { uploadProjectImages(item, Array.from(event.target.files || [])); event.target.value = '' }} /><ImagePlus size={16} /><span className="sr-only">{uploadingProject === item._id ? 'A carregar imagens' : 'Adicionar imagens do imóvel'}</span></label>}<button className="icon-button delete-button" onClick={() => remove(item)} title="Arquivar registo"><X size={15} /></button></td></tr>)}</tbody></table></div> : <div className="empty-list"><ClipboardList /><strong>Sem registos para apresentar</strong><span>Quando existirem registos, poderá geri-los nesta área.</span></div>}</section></>
 }
 
 function AdminApp() {

@@ -320,11 +320,37 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
           floorPlanFile ? uploadToCloudinary(floorPlanFile, 'traco/projects/floor-plans') : null,
         ])
         const update = {}
-        if (modelAsset) update.model3d = { url: modelAsset.url, publicId: modelAsset.publicId, name: modelAsset.name }
-        if (planAsset) update.floorPlan = planAsset
+        if (modelAsset) update.$set = { ...update.$set, model3d: { url: modelAsset.url, publicId: modelAsset.publicId, name: modelAsset.name } }
+        if (planAsset) update.$set = { ...update.$set, floorPlan: planAsset }
         const project = await Project.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true })
         if (!project) return res.status(404).json({ message: 'Projecto não encontrado.' })
         await logActivity(req.auth.sub, '3d-assets-updated', path, project.id)
+        res.json({ item: project })
+      } catch (error) { next(error) }
+    })
+    const projectGalleryUpload = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024, files: 10 },
+      fileFilter(_req, file, callback) {
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+          return callback(new Error('Envie imagens em JPG, PNG ou WebP.'))
+        }
+        callback(null, true)
+      },
+    })
+    router.post('/:id/gallery', authenticate, authorize(allowedRoles), projectGalleryUpload.array('images', 10), async (req, res, next) => {
+      try {
+        if (!req.files?.length) return res.status(400).json({ message: 'Seleccione pelo menos uma imagem para carregar.' })
+        if (!process.env.CLOUDINARY_CLOUD_NAME) return res.status(503).json({ message: 'O carregamento de imagens requer a configuração do Cloudinary.' })
+        const project = await Project.findById(req.params.id).select('gallery')
+        if (!project) return res.status(404).json({ message: 'Projecto não encontrado.' })
+        if (project.gallery.length + req.files.length > 20) {
+          return res.status(400).json({ message: 'Cada projecto pode ter no máximo 20 imagens na galeria.' })
+        }
+        const images = await Promise.all(req.files.map(file => uploadToCloudinary(file, 'traco/projects/gallery')))
+        project.gallery.push(...images)
+        await project.save()
+        await logActivity(req.auth.sub, 'project-gallery-updated', path, project.id)
         res.json({ item: project })
       } catch (error) { next(error) }
     })
