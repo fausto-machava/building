@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: traco-api
+    name: arqcons-api
     runtime: node
     plan: free
     buildCommand: npm ci
-    startCommand: npm run start -w backend
+    startCommand: npm run start -w platform-backend
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -14,4 +14,14 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: CLIENT_ORIGIN
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_URL
         sync: false

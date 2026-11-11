@@ -3,13 +3,14 @@
   "private": true,
   "workspaces": [
     "frontend",
-    "backend"
+    "Backend"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev -w frontend\" \"npm run dev -w backend\"",
-    "build": "npm run build -w frontend",
-    "start": "npm run start -w backend",
-    "seed:admin": "npm run seed:admin -w backend"
+    "dev": "concurrently \"npm run dev -w platform-frontend\" \"npm run dev -w platform-backend\"",
+    "build": "npm run build -w platform-frontend",
+    "start": "npm run start -w platform-backend",
+    "seed:admin": "npm run seed:admin -w platform-backend",
+    "seed:services": "npm run seed:services -w platform-backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

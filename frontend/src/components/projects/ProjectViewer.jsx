@@ -1,6 +1,8 @@
-import { Component, Suspense, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
-import { Center, OrbitControls, useGLTF } from '@react-three/drei'
+import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Canvas, useLoader } from '@react-three/fiber'
+import { Center, OrbitControls } from '@react-three/drei'
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { Box, RotateCcw } from 'lucide-react'
 
 const cameraViews = {
@@ -94,30 +96,115 @@ function DemoHouse({ mode }) {
   )
 }
 
-function ProjectModel({ url }) {
-  const { scene } = useGLTF(url)
-  return <Center><primitive object={scene} /></Center>
+function hasMeshes(node) {
+  if (node.isMesh) return true
+  return node.children.some(hasMeshes)
+}
+
+function getNamedParts(root) {
+  const parts = []
+  let index = 0
+  const genericNames = new Set(['default', 'mesh', 'group', 'object', 'scene'])
+
+  function visit(node, hasNamedParent = false) {
+    const name = node.name?.trim()
+    const isNamedPart = node !== root && name && !genericNames.has(name.toLowerCase()) && hasMeshes(node)
+    if (isNamedPart && !hasNamedParent) {
+      parts.push({ id: `part-${index++}`, name, node })
+      return
+    }
+    node.children.forEach(child => visit(child, hasNamedParent || Boolean(isNamedPart)))
+  }
+
+  visit(root)
+  return parts
+}
+
+function ProjectModel({ url, format, selectedPart, onPartsChange, onModelLoaded }) {
+  const loadedModel = useLoader(format === 'obj' ? OBJLoader : GLTFLoader, url)
+  const source = format === 'obj' ? loadedModel : loadedModel.scene
+  const scene = useMemo(() => source.clone(true), [source])
+  const parts = useMemo(() => getNamedParts(scene), [scene])
+  const selectedNode = parts.find(part => part.id === selectedPart)
+  const displayedScene = useMemo(
+    () => selectedNode ? selectedNode.node.clone(true) : scene,
+    [scene, selectedNode],
+  )
+
+  useEffect(() => {
+    onPartsChange(parts.map(({ id, name }) => ({ id, name })))
+  }, [onPartsChange, parts])
+
+  useEffect(() => {
+    onModelLoaded(url)
+  }, [onModelLoaded, url])
+
+  return <Center key={selectedPart || 'all'}><primitive object={displayedScene} /></Center>
 }
 
 class ModelErrorBoundary extends Component {
   constructor(props) {
     super(props)
-    this.state = { failed: false }
+    this.state = { error: null }
   }
 
-  static getDerivedStateFromError() {
-    return { failed: true }
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error) {
+    this.props.onError(error)
   }
 
   render() {
-    return this.props.children(this.state.failed)
+    return this.props.children(this.state.error)
   }
 }
 
-export default function ProjectViewer({ modelUrl, floorPlanUrl, title }) {
+export default function ProjectViewer({ modelUrl, modelFormat, floorPlanUrl, title }) {
   const [mode, setMode] = useState('plan')
   const [reset, setReset] = useState(0)
+  const [parts, setParts] = useState([])
+  const [selectedPart, setSelectedPart] = useState('')
+  const [readyModelUrl, setReadyModelUrl] = useState('')
+  const [loadedModelUrl, setLoadedModelUrl] = useState('')
+  const [modelError, setModelError] = useState(null)
+  const canvasRef = useRef(null)
   const hasModel = Boolean(modelUrl)
+  const format = modelFormat || (/\.obj(?:$|[?#])/i.test(modelUrl || '') ? 'obj' : 'glb')
+  const updateParts = useCallback(nextParts => setParts(nextParts), [])
+
+  useEffect(() => {
+    setParts([])
+    setSelectedPart('')
+    setLoadedModelUrl('')
+    setModelError(null)
+    if (!modelUrl) return undefined
+
+    const canvasElement = canvasRef.current
+    if (!canvasElement || !('IntersectionObserver' in window)) {
+      setReadyModelUrl(modelUrl)
+      return undefined
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setReadyModelUrl(modelUrl)
+        observer.disconnect()
+      }
+    }, { rootMargin: '200px' })
+    observer.observe(canvasElement)
+    return () => observer.disconnect()
+  }, [modelUrl])
+
+  function retryModel() {
+    useLoader.clear(format === 'obj' ? OBJLoader : GLTFLoader, modelUrl)
+    setModelError(null)
+    setLoadedModelUrl('')
+    setReadyModelUrl(modelUrl)
+    setReset(value => value + 1)
+  }
+
   const views = [
     { id: 'plan', label: 'Planta 3D' },
     { id: 'exterior', label: 'Exterior' },
@@ -144,11 +231,33 @@ export default function ProjectViewer({ modelUrl, floorPlanUrl, title }) {
           </div>
           <button className="viewer-reset" onClick={() => setReset(value => value + 1)}><RotateCcw size={14} /> Repor vista</button>
         </div>
-        <div className="project-canvas">
-          <ModelErrorBoundary key={`${modelUrl || 'demo'}-${mode}-${reset}`}>
-            {(failed) => (
+        {parts.length > 0 && (
+          <div className="viewer-part-selector">
+            <label htmlFor="viewer-part">Compartimento</label>
+            <select id="viewer-part" value={selectedPart} onChange={event => setSelectedPart(event.target.value)}>
+              <option value="">Todos os compartimentos</option>
+              {parts.map(part => <option key={part.id} value={part.id}>{part.name}</option>)}
+            </select>
+            <span>Os compartimentos são identificados pelos nomes dos grupos no modelo 3D.</span>
+          </div>
+        )}
+        <div className="project-canvas" ref={canvasRef}>
+          {hasModel && readyModelUrl !== modelUrl && (
+            <div className="viewer-model-loading" role="status">O modelo 3D será carregado quando esta área estiver próxima do ecrã.</div>
+          )}
+          {hasModel && readyModelUrl === modelUrl && loadedModelUrl !== modelUrl && !modelError && (
+            <div className="viewer-model-loading" role="status">A carregar modelo 3D...</div>
+          )}
+          {modelError && (
+            <div className="viewer-model-error" role="alert">
+              <p>Não foi possível carregar o modelo 3D.{modelError.message ? ` ${modelError.message}` : ''}</p>
+              <button type="button" onClick={retryModel}>Tentar novamente</button>
+            </div>
+          )}
+          <ModelErrorBoundary key={`${modelUrl || 'demo'}-${format}-${reset}`} onError={setModelError}>
+            {(error) => (
               <Canvas
-                key={`${mode}-${reset}-${failed}`}
+                key={`${mode}-${reset}-${Boolean(error)}`}
                 camera={{ position: cameraViews[mode].position, fov: mode === 'plan' ? 42 : 46 }}
                 shadows
                 dpr={[1, 1.5]}
@@ -159,7 +268,7 @@ export default function ProjectViewer({ modelUrl, floorPlanUrl, title }) {
                 <directionalLight position={[7, 10, 5]} intensity={2} castShadow />
                 <directionalLight position={[-5, 4, -4]} intensity={0.55} />
                 <Suspense fallback={null}>
-                  {hasModel && !failed ? <ProjectModel url={modelUrl} /> : <DemoHouse mode={mode} />}
+                  {hasModel && readyModelUrl === modelUrl && !error ? <ProjectModel url={modelUrl} format={format} selectedPart={selectedPart} onPartsChange={updateParts} onModelLoaded={setLoadedModelUrl} /> : !hasModel ? <DemoHouse mode={mode} /> : null}
                 </Suspense>
                 <OrbitControls
                   key={`${mode}-${reset}`}
@@ -175,13 +284,13 @@ export default function ProjectViewer({ modelUrl, floorPlanUrl, title }) {
               </Canvas>
             )}
           </ModelErrorBoundary>
-          {hasModel && <span className="viewer-model-badge">{mode === 'interior' ? 'Interior · use um modelo com paredes/tecto em corte' : 'Modelo 3D do projecto'}</span>}
+          {hasModel && loadedModelUrl === modelUrl && <span className="viewer-model-badge">{mode === 'interior' ? 'Interior · use um modelo com paredes/tecto em corte' : 'Modelo 3D do projecto'}</span>}
           {!hasModel && <span className="viewer-model-badge">Modelo demonstrativo · substitua pelo modelo 3D do projecto</span>}
         </div>
       </div>
       <div className="project-viewer-footnote">
-        {floorPlanUrl ? <a href={floorPlanUrl} target="_blank" rel="noreferrer">Ver planta técnica em tamanho completo <Box size={14} /></a> : <span>Esta visualização é ilustrativa. Carregue um modelo GLB para apresentar o projecto real.</span>}
-        {hasModel && <span>Para um tour interior visível, o modelo GLB deve incluir a casa em corte ou os espaços interiores expostos.</span>}
+        {floorPlanUrl ? <a href={floorPlanUrl} target="_blank" rel="noreferrer">Ver planta técnica em tamanho completo <Box size={14} /></a> : <span>Esta visualização é ilustrativa. Carregue um modelo GLB ou OBJ para apresentar o projecto real.</span>}
+        {hasModel && <span>Para seleccionar compartimentos, os elementos do modelo devem ter nomes distintos.</span>}
       </div>
       {floorPlanUrl && <figure className="project-floorplan"><figcaption><span className="eyebrow">DOCUMENTAÇÃO TÉCNICA</span><strong>Planta do projecto</strong></figcaption><a href={floorPlanUrl} target="_blank" rel="noreferrer"><img src={floorPlanUrl} alt={`Planta técnica de ${title}`} loading="lazy" /></a></figure>}
       <span className="sr-only">{title}</span>

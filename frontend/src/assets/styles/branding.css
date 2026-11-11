@@ -1,0 +1,68 @@
+:root {
+  --navy: #1a1a1a;
+  --gold: #d8541d;
+  --ink: #1a1a1a;
+}
+
+.brand-icon {
+  display: block;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.brand-light .brand-icon {
+  padding: 2px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.brand-name small {
+  white-space: nowrap;
+  letter-spacing: .08em;
+}
+
+.admin-create-form .form-fields textarea {
+  min-height: 100px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-size: 11px;
+  resize: vertical;
+}
+
+.admin-create-form .project-publish-toggle {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.admin-create-form .project-publish-toggle input {
+  accent-color: var(--navy);
+}
+
+.service-image {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  margin: 18px 0;
+  object-fit: cover;
+}
+
+.button-dark:hover {
+  background: #333;
+}
+
+.button-gold:hover {
+  background: #b84316;
+}
+
+.text-link:hover,
+.project-image-upload:focus-within {
+  color: var(--gold);
+}

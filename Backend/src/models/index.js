@@ -107,6 +107,8 @@ const projectSchema = new Schema({
     url: { type: String, trim: true },
     publicId: { type: String, trim: true },
     name: { type: String, trim: true, maxlength: 255 },
+    format: { type: String, enum: ['glb', 'obj'] },
+    storage: { type: String, enum: ['cloudinary', 'r2'] },
   },
   floorPlan: mediaSchema,
   gallery: { type: [mediaSchema], default: [] },
@@ -133,6 +135,17 @@ const activityLogSchema = new Schema({
 }, { timestamps: true })
 activityLogSchema.index({ createdAt: -1 })
 
+const technicalLogSchema = new Schema({
+  level: { type: String, enum: ['error'], default: 'error', required: true },
+  name: { type: String, maxlength: 120 },
+  message: { type: String, required: true, maxlength: 2000 },
+  method: { type: String, maxlength: 10 },
+  path: { type: String, maxlength: 500 },
+  statusCode: { type: Number },
+  stack: { type: String, maxlength: 8000 },
+}, { timestamps: true })
+technicalLogSchema.index({ createdAt: -1 })
+
 export const User = model('User', userSchema)
 export const Client = model('Client', clientSchema)
 export const Service = model('Service', serviceSchema)
@@ -141,3 +154,4 @@ export const QuoteRequest = model('QuoteRequest', quoteRequestSchema)
 export const Quotation = model('Quotation', quotationSchema)
 export const Notification = model('Notification', notificationSchema)
 export const ActivityLog = model('ActivityLog', activityLogSchema)
+export const TechnicalLog = model('TechnicalLog', technicalLogSchema)

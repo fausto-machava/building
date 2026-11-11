@@ -8,7 +8,7 @@ if (!ADMIN_NAME || !ADMIN_EMAIL || !ADMIN_PASSWORD || ADMIN_PASSWORD.length < 12
 }
 
 try {
-  await mongoose.connect(MONGODB_URI || 'mongodb://127.0.0.1:27017/traco-platform')
+  await mongoose.connect(MONGODB_URI || 'mongodb://127.0.0.1:27017/arqcons-platform')
   const existing = await User.findOne({ email: ADMIN_EMAIL.toLowerCase() })
   if (existing) throw new Error('An account already exists for ADMIN_EMAIL.')
   await User.create({ name: ADMIN_NAME, email: ADMIN_EMAIL, password: ADMIN_PASSWORD, role: 'admin' })
