@@ -497,91 +497,29 @@
   font-weight: 500;
 }
 
-.project-edit-preview {
-  display: grid;
-  gap: 18px;
-  margin: 0 0 22px;
-  padding: 18px;
+.project-cover-field {
+  grid-column: 1 / -1;
+}
+
+.project-assets-form .project-cover-field > input[type="url"] {
+  width: 100%;
+  min-height: 38px;
+  padding: 9px;
   border: 1px solid var(--line);
-  background: #fbfbfc;
-}
-
-.project-edit-summary h3 {
-  margin: 8px 0 5px;
-  color: var(--navy);
-  font: 600 17px "Manrope", sans-serif;
-}
-
-.project-edit-summary p,
-.project-edit-summary > span,
-.project-edit-empty {
-  margin: 0;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.6;
-}
-
-.project-edit-summary > span {
-  display: block;
-  margin-top: 7px;
-}
-
-.project-edit-media {
-  display: grid;
-  gap: 14px;
-}
-
-.project-edit-media > div > strong {
-  display: block;
-  margin-bottom: 9px;
+  background: #fff;
   color: var(--ink);
   font-size: 10px;
 }
 
-.project-edit-image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(94px, 1fr));
-  gap: 9px;
+.project-cover-filename {
+  color: var(--navy) !important;
+  font-weight: 600 !important;
 }
 
-.project-edit-image-grid a,
-.project-edit-asset-link > img {
-  display: block;
-  height: 82px;
-  overflow: hidden;
-  background: var(--paper);
-}
-
-.project-edit-image-grid img,
-.project-edit-asset-link > img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.project-edit-asset-link {
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
-  gap: 8px;
-  color: var(--navy);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.project-edit-asset-link > img {
-  width: 100px;
-}
-
-.project-edit-model-link {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  background: #fff;
-}
-
-.project-edit-model-link svg {
-  flex: 0 0 auto;
-  color: var(--gold);
+.project-preview-action {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 10px;
 }
 
 .project-form-actions {
@@ -648,6 +586,21 @@
   text-transform: uppercase;
 }
 
+.project-preview-hero > .project-preview-status {
+  align-self: flex-start;
+  padding: 6px 9px;
+  border: 1px solid rgb(255 255 255 / 55%);
+  border-radius: 2px;
+  background: rgb(13 31 50 / 38%);
+  font-size: 9px;
+  letter-spacing: .06em;
+}
+
+.project-preview-hero > .project-preview-status.published {
+  border-color: #b7d9c4;
+  background: rgb(29 86 55 / 78%);
+}
+
 .project-preview-hero h3 {
   margin: 0;
   font: 600 clamp(24px, 4vw, 38px)/1.15 "Manrope", sans-serif;
@@ -661,6 +614,10 @@
 
 .project-preview-details {
   padding: 24px 30px 30px;
+}
+
+.project-preview-details > .project-viewer-section {
+  margin-top: 24px;
 }
 
 .project-preview-details > p {
@@ -709,6 +666,19 @@
 }
 
 @media (max-width: 640px) {
+  .project-preview-backdrop {
+    padding: 10px;
+  }
+
+  .project-preview-hero {
+    min-height: 220px;
+    padding: 22px;
+  }
+
+  .project-preview-details {
+    padding: 20px;
+  }
+
   .project-detail-hero {
     min-height: 350px;
     padding-bottom: 36px;

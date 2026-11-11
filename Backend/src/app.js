@@ -105,7 +105,7 @@ const invalidModelUploadSession = {
 
 function getModelUploadSession(req) {
   const { uploadId, uploadToken } = req.body
-  if (!mongoose.isValidObjectId(req.params.id) || typeof uploadId !== 'string' || uploadId.length > 200
+  if (!mongoose.isValidObjectId(req.params.id) || typeof uploadId !== 'string' || uploadId.length > 1024
     || typeof uploadToken !== 'string' || uploadToken.length > 4096) return null
   const projectId = new mongoose.Types.ObjectId(req.params.id).toString()
   try {
@@ -355,6 +355,29 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
     } catch (error) { next(error) }
   })
   if (Model === Project) {
+    const projectCoverUpload = multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+      fileFilter(_req, file, callback) {
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+          return callback(new Error('Envie uma imagem de capa em JPG, PNG ou WebP.'))
+        }
+        callback(null, true)
+      },
+    })
+    router.post('/:id/cover', authenticate, authorize(allowedRoles), projectCoverUpload.single('coverImage'), async (req, res, next) => {
+      try {
+        if (!req.file) return res.status(400).json({ message: 'Seleccione uma imagem de capa.' })
+        if (!process.env.CLOUDINARY_CLOUD_NAME) return res.status(503).json({ message: 'O carregamento de imagens requer a configuração do Cloudinary.' })
+        const project = await Project.findById(req.params.id)
+        if (!project) return res.status(404).json({ message: 'Projecto não encontrado.' })
+        const cover = await uploadToCloudinary(req.file, 'arqcons/projects/covers')
+        project.coverImage = cover.url
+        await project.save()
+        await logActivity(req.auth.sub, 'project-cover-updated', path, project.id)
+        res.json({ item: project })
+      } catch (error) { next(error) }
+    })
     router.post('/:id/3d-assets/model-multipart/initiate', authenticate, authorize(allowedRoles), async (req, res, next) => {
       try {
         if (!isR2Configured()) {
@@ -810,7 +833,8 @@ app.use((error, req, res, _next) => {
   if (error.name === 'CastError') return res.status(400).json({ message: 'Identificador inválido.' })
   if (error.code === 11000) return res.status(409).json({ message: 'Já existe um registo com estes dados.' })
   if (error.message === 'Origin is not allowed by CORS.') return res.status(403).json({ message: 'Origem não autorizada.' })
-  if (error.message === 'Formato de ficheiro não permitido.' || error.message.startsWith('Envie um modelo GLB ou OBJ')) return res.status(400).json({ message: error.message })
+  if (error.message === 'Formato de ficheiro não permitido.' || error.message.startsWith('Envie um modelo GLB ou OBJ')
+    || error.message.startsWith('Envie uma imagem de capa')) return res.status(400).json({ message: error.message })
   res.status(500).json({ message: production ? 'Ocorreu um erro interno.' : error.message })
 })
 

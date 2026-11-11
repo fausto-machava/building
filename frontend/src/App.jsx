@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Building2, Check,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Building2, Check, Eye,
   ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Compass, FileText,
   FolderKanban, HardHat, ImagePlus, Layers3, LayoutDashboard, LoaderCircle, LockKeyhole,
   LogOut, Mail, MapPin, Menu, MessageSquareText, Phone, Plus, Search, Send,
@@ -32,29 +32,40 @@ function ProcessingOverlay({ message, progress = null }) {
   </div>
 }
 
-function getProjectPublicationMissingFields(project) {
+function getProjectPublicationMissingFields(project, hasCoverUpload = false) {
   return [
     !project.title?.trim() && 'nome do projecto',
     !project.category?.trim() && 'categoria',
-    !project.coverImage?.trim() && 'URL da imagem de capa',
+    !project.coverImage?.trim() && !hasCoverUpload && 'imagem de capa',
   ].filter(Boolean)
 }
 
 function ProjectPreview({ project, assets, onClose }) {
-  const [uploadedImages, setUploadedImages] = useState([])
+  const [uploadedAssets, setUploadedAssets] = useState({ cover: '', model: '', floorPlan: '', images: [] })
 
   useEffect(() => {
+    const cover = assets.coverImage ? URL.createObjectURL(assets.coverImage) : ''
+    const model = assets.model ? URL.createObjectURL(assets.model) : ''
+    const floorPlan = assets.floorPlan ? URL.createObjectURL(assets.floorPlan) : ''
     const images = assets.images.map(file => ({ url: URL.createObjectURL(file), name: file.name }))
-    setUploadedImages(images)
-    return () => images.forEach(image => URL.revokeObjectURL(image.url))
-  }, [assets.images])
+    setUploadedAssets({ cover, model, floorPlan, images })
+    return () => {
+      const urls = [cover, model, floorPlan, ...images.map(image => image.url)]
+      urls.filter(Boolean).forEach(url => URL.revokeObjectURL(url))
+    }
+  }, [assets.coverImage, assets.model, assets.floorPlan, assets.images])
 
   const images = [
     ...(project.gallery || []),
-    ...uploadedImages,
+    ...uploadedAssets.images,
   ]
-  const coverImage = project.coverImage || images[0]?.url
-  const missingFields = getProjectPublicationMissingFields(project)
+  const coverImage = uploadedAssets.cover || project.coverImage || images[0]?.url
+  const modelUrl = uploadedAssets.model || project.model3d?.url
+  const modelFormat = assets.model
+    ? (assets.model.name.toLowerCase().endsWith('.obj') ? 'obj' : 'glb')
+    : project.model3d?.format || (project.model3d?.name?.toLowerCase().endsWith('.obj') ? 'obj' : undefined)
+  const floorPlanUrl = uploadedAssets.floorPlan || project.floorPlan?.url
+  const missingFields = getProjectPublicationMissingFields(project, Boolean(assets.coverImage))
 
   return <div className="project-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section className="project-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="project-preview-title">
@@ -68,16 +79,19 @@ function ProjectPreview({ project, assets, onClose }) {
             <span>{project.category || 'Categoria do projecto'}</span>
             <h3>{project.title || 'Nome do projecto'}</h3>
             <p>{[project.location, project.year].filter(Boolean).join(' · ') || 'Localização e ano'}</p>
+            <span className={`project-preview-status${project.isPublished ? ' published' : ''}`}>{project.isPublished ? 'Publicado' : 'Rascunho'}</span>
           </div>
           <div className="project-preview-details">
             <span className="eyebrow">SOBRE O PROJECTO</span>
             <p>{project.description || 'A descrição do projecto será apresentada aqui.'}</p>
+            <Suspense fallback={<div className="project-loading"><LoaderCircle className="spin" /> A preparar visualização 3D...</div>}>
+              <ProjectViewer modelUrl={modelUrl} modelFormat={modelFormat} floorPlanUrl={floorPlanUrl} title={project.title || 'Projecto'} />
+            </Suspense>
             {images.length > 0 && <>
               <h4>Imagens do projecto</h4>
               <div className="project-preview-gallery">{images.map((image, index) => <img key={`${image.url}-${index}`} src={image.url} alt={image.name || `Imagem ${index + 1} do projecto`} />)}</div>
             </>}
-            {assets.floorPlan && <p className="project-preview-selection">Planta seleccionada: {assets.floorPlan.name}</p>}
-            {assets.model && <p className="project-preview-selection">Modelo 3D seleccionado: {assets.model.name}</p>}
+            {assets.model && <p className="project-preview-selection">A pré-visualizar o modelo seleccionado: {assets.model.name}</p>}
           </div>
         </article>
         {missingFields.length > 0 && <p className="project-preview-warning" role="status">Para publicar este projecto, preencha: {missingFields.join(', ')}.</p>}
@@ -441,11 +455,11 @@ function ResourcePage({ resource, title, description, user }) {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [showForm, setShowForm] = useState(false)
-  const [showProjectPreview, setShowProjectPreview] = useState(false)
+  const [projectPreview, setProjectPreview] = useState(null)
   const [editingItem, setEditingItem] = useState(null)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
-  const [projectAssets, setProjectAssets] = useState({ model: null, floorPlan: null, images: [] })
+  const [projectAssets, setProjectAssets] = useState({ coverImage: null, model: null, floorPlan: null, images: [] })
   const [modelUploadProgress, setModelUploadProgress] = useState(null)
   const [uploadingProject, setUploadingProject] = useState('')
   const [processingMessage, setProcessingMessage] = useState('')
@@ -467,8 +481,6 @@ function ResourcePage({ resource, title, description, user }) {
       ['location', 'Localização', 'text'],
       ['description', 'Descrição', 'textarea'],
       ['year', 'Ano', 'number'],
-      ['coverImage', 'URL da imagem de capa', 'url'],
-      ['isPublished', 'Publicar no portfólio', 'checkbox'],
     ],
     services: [
       ['name', 'Nome do serviço', 'text', true],
@@ -481,22 +493,33 @@ function ResourcePage({ resource, title, description, user }) {
   }[resource] || []), [resource])
   function startCreate() {
     setEditingItem(null)
-    setShowProjectPreview(false)
+    setProjectPreview(null)
     setForm({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '', isPublished: false, isFeatured: false })
-    setProjectAssets({ model: null, floorPlan: null, images: [] })
+    setProjectAssets({ coverImage: null, model: null, floorPlan: null, images: [] })
     setShowForm(true)
   }
   function startEdit(item) {
     setEditingItem(item)
-    setShowProjectPreview(false)
+    setProjectPreview(null)
     setForm({ ...item, year: item.year ?? '', order: item.order ?? '', isPublished: Boolean(item.isPublished), isFeatured: Boolean(item.isFeatured) })
-    setProjectAssets({ model: null, floorPlan: null, images: [] })
+    setProjectAssets({ coverImage: null, model: null, floorPlan: null, images: [] })
     setShowForm(true)
   }
   async function create(event) {
     event.preventDefault()
+    const missingProjectFields = resource === 'projects'
+      ? getProjectPublicationMissingFields(form, Boolean(projectAssets.coverImage))
+      : []
+    if (resource === 'projects' && form.isPublished && missingProjectFields.length) {
+      setNotice(`Para publicar o projecto, preencha: ${missingProjectFields.join(', ')}.`)
+      return
+    }
     if (resource === 'projects' && projectAssets.model?.size > 1024 * 1024 * 1024) {
       setNotice('O modelo 3D não pode exceder 1 GB.')
+      return
+    }
+    if (resource === 'projects' && projectAssets.coverImage?.size > 10 * 1024 * 1024) {
+      setNotice('A imagem de capa não pode exceder 10 MB.')
       return
     }
     setSaving(true); setNotice('')
@@ -512,6 +535,10 @@ function ResourcePage({ resource, title, description, user }) {
             ? Number(form[name])
             : form[name] === '' || form[name] === undefined || form[name] === null ? undefined : form[name],
       ]))
+    if (resource === 'projects') {
+      payload.coverImage = form.coverImage || undefined
+      payload.isPublished = Boolean(form.isPublished && (!projectAssets.coverImage || form.coverImage))
+    }
     if (resource === 'quotations') payload.items = [{ description: form.title, quantity: 1, unitPrice: Number(form.amount), subtotal: Number(form.amount) }]
     try {
       const { data } = editingItem
@@ -520,12 +547,31 @@ function ResourcePage({ resource, title, description, user }) {
       let successMessage = editingItem ? 'Registo actualizado com sucesso.' : 'Registo criado com sucesso.'
       if (resource === 'projects') {
         const uploadErrors = []
+        let coverUploaded = false
+        if (projectAssets.coverImage) {
+          setProcessingMessage('A carregar a imagem de capa...')
+          const cover = new FormData()
+          cover.append('coverImage', projectAssets.coverImage)
+          try {
+            await api.post(`/projects/${data.item._id}/cover`, cover, { headers: { 'Content-Type': 'multipart/form-data' } })
+            coverUploaded = true
+          } catch (reason) {
+            uploadErrors.push(getErrorMessage(reason))
+          }
+        }
         if (projectAssets.floorPlan) {
           setProcessingMessage('A carregar a planta técnica...')
           const assets = new FormData()
           assets.append('floorPlan', projectAssets.floorPlan)
           try {
             await api.post(`/projects/${data.item._id}/3d-assets`, assets, { headers: { 'Content-Type': 'multipart/form-data' } })
+          } catch (reason) {
+            uploadErrors.push(getErrorMessage(reason))
+          }
+        }
+        if (form.isPublished && projectAssets.coverImage && !form.coverImage && coverUploaded) {
+          try {
+            await api.put(`/projects/${data.item._id}`, { isPublished: true })
           } catch (reason) {
             uploadErrors.push(getErrorMessage(reason))
           }
@@ -558,7 +604,7 @@ function ResourcePage({ resource, title, description, user }) {
       setShowForm(false)
       setEditingItem(null)
       setForm({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '' })
-      setProjectAssets({ model: null, floorPlan: null, images: [] })
+      setProjectAssets({ coverImage: null, model: null, floorPlan: null, images: [] })
       setNotice(successMessage)
       await load()
     }
@@ -602,13 +648,7 @@ function ResourcePage({ resource, title, description, user }) {
     }
   }
   const statuses = ['Novo', 'Em análise', 'Em contacto', 'Enviada', 'Em negociação', 'Aceite', 'Rejeitada', 'Planeamento', 'Em execução', 'Suspenso', 'Concluído']
-  const projectPreviewImages = resource === 'projects' && editingItem
-    ? [
-      ...(form.coverImage ? [{ url: form.coverImage, name: 'Imagem de capa' }] : []),
-      ...(editingItem.gallery || []),
-    ].filter((image, index, images) => image.url && images.findIndex(candidate => candidate.url === image.url) === index)
-    : []
-  const missingProjectFields = resource === 'projects' ? getProjectPublicationMissingFields(form) : []
+  const missingProjectFields = resource === 'projects' ? getProjectPublicationMissingFields(form, Boolean(projectAssets.coverImage)) : []
   return (
     <>
       <div className="admin-page-heading">
@@ -621,36 +661,20 @@ function ResourcePage({ resource, title, description, user }) {
         )}
       </div>
       {notice && <p className="notice">{notice}</p>}
+      {showForm && resource === 'projects' && (
+        <div className="project-preview-action">
+          <button
+            className="button button-quiet"
+            type="button"
+            onClick={() => setProjectPreview({ project: { ...editingItem, ...form }, assets: projectAssets })}
+          >
+            <Eye size={15} /> Pré-visualizar projecto
+          </button>
+        </div>
+      )}
       {showForm && (
         <form className="form-card admin-create-form" onSubmit={create} aria-busy={saving}>
           <h2>{editingItem ? 'Editar registo' : 'Novo registo'}</h2>
-          {resource === 'projects' && editingItem && (
-            <section className="project-edit-preview" aria-label="Pré-visualização do projecto">
-              <div className="project-edit-summary">
-                <span className="eyebrow">PRÉ-VISUALIZAÇÃO DO PROJECTO</span>
-                <h3>{form.title || 'Projecto sem título'}</h3>
-                <p>{form.description || 'Sem descrição.'}</p>
-                <span>{[form.category, form.location, form.year].filter(Boolean).join(' · ') || 'Sem categoria, localização ou ano'}</span>
-              </div>
-              <div className="project-edit-media">
-                <div>
-                  <strong>Imagens do projecto</strong>
-                  {projectPreviewImages.length
-                    ? <div className="project-edit-image-grid">{projectPreviewImages.map((image, index) => <a key={`${image.url}-${index}`} href={image.url} target="_blank" rel="noreferrer" aria-label={`Abrir ${image.name || `imagem ${index + 1}`} em tamanho completo`}><img src={image.url} alt={image.name || `Imagem ${index + 1} do projecto`} loading="lazy" /></a>)}</div>
-                    : <p className="project-edit-empty">Este projecto ainda não tem imagens.</p>}
-                </div>
-                {editingItem.floorPlan?.url && <a className="project-edit-asset-link" href={editingItem.floorPlan.url} target="_blank" rel="noreferrer">
-                  <img src={editingItem.floorPlan.url} alt="Planta técnica actual" loading="lazy" />
-                  <span>Ver planta técnica actual</span>
-                </a>}
-                {editingItem.model3d?.url && <a className="project-edit-asset-link project-edit-model-link" href={editingItem.model3d.url} target="_blank" rel="noreferrer">
-                  <Layers3 size={18} />
-                  <span>Ver modelo 3D actual{editingItem.model3d.name ? `: ${editingItem.model3d.name}` : ''}</span>
-                  <ArrowUpRight size={14} />
-                </a>}
-              </div>
-            </section>
-          )}
           <div className="form-fields">
             {fields.map(([name, label, type, required]) => (
               <label key={name} className={type === 'checkbox' ? 'project-publish-toggle' : undefined}>
@@ -658,12 +682,46 @@ function ResourcePage({ resource, title, description, user }) {
                   ? <>{label}<textarea required={required} value={form[name] || ''} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></>
                   : type === 'checkbox'
                     ? <><input type="checkbox" checked={Boolean(form[name])} onChange={event => setForm(current => ({ ...current, [name]: event.target.checked }))} />{label}</>
-                    : <>{label}<input type={type} required={required || (resource === 'projects' && name === 'coverImage' && Boolean(form.isPublished))} min={type === 'number' ? '0' : undefined} value={form[name] ?? ''} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></>}
+                    : <>{label}<input type={type} required={required} min={type === 'number' ? '0' : undefined} value={form[name] ?? ''} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></>}
               </label>
             ))}
           </div>
           {resource === 'projects' && (
             <div className="project-assets-form">
+              <label className="project-cover-field">
+                Capa do projecto
+                <span>Carregue uma imagem ou indique uma URL. A imagem carregada substitui a URL.</span>
+                <input
+                  type="url"
+                  value={form.coverImage || ''}
+                  required={Boolean(form.isPublished && !projectAssets.coverImage)}
+                  placeholder="https://exemplo.com/imagem.jpg"
+                  onChange={event => {
+                    setForm(current => ({ ...current, coverImage: event.target.value }))
+                    setProjectAssets(current => ({ ...current, coverImage: null }))
+                  }}
+                />
+                <input
+                  key={projectAssets.coverImage?.name || 'no-cover-file'}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={event => {
+                    const file = event.target.files?.[0] || null
+                    if (file?.size > 10 * 1024 * 1024) {
+                      setNotice('A imagem de capa não pode exceder 10 MB.')
+                      event.target.value = ''
+                      return
+                    }
+                    setNotice('')
+                    setProjectAssets(current => ({ ...current, coverImage: file }))
+                  }}
+                />
+                {projectAssets.coverImage && <span className="project-cover-filename">Imagem seleccionada: {projectAssets.coverImage.name}</span>}
+              </label>
+              <label className="project-publish-toggle">
+                <input type="checkbox" checked={Boolean(form.isPublished)} onChange={event => setForm(current => ({ ...current, isPublished: event.target.checked }))} />
+                Publicar projecto no portfólio
+              </label>
               <label>Modelo 3D GLB ou OBJ <span>(opcional, máx. 1 GB; seleccione para substituir o actual)</span><input type="file" accept=".glb,.obj,model/gltf-binary,model/obj,text/plain,application/octet-stream" onChange={event => setProjectAssets(current => ({ ...current, model: event.target.files?.[0] || null }))} /></label>
               {modelUploadProgress !== null && <div className="model-upload-progress" role="status" aria-live="polite"><progress max="100" value={modelUploadProgress} /><span>A enviar modelo 3D: {modelUploadProgress}%</span></div>}
               <label>Planta técnica <span>(opcional, JPG, PNG ou WebP; seleccione para substituir a actual)</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setProjectAssets(current => ({ ...current, floorPlan: event.target.files?.[0] || null }))} /></label>
@@ -672,7 +730,6 @@ function ResourcePage({ resource, title, description, user }) {
           )}
           {resource === 'projects' && form.isPublished && missingProjectFields.length > 0 && <p className="project-preview-warning" role="status">O projecto só será apresentado no website depois de preencher: {missingProjectFields.join(', ')}.</p>}
           <div className="project-form-actions">
-            {resource === 'projects' && <button className="button button-quiet" type="button" onClick={() => setShowProjectPreview(true)}><Layers3 size={15} /> Pré-visualizar projecto</button>}
             <button className="button button-dark" disabled={saving}>{saving ? 'A guardar...' : editingItem ? 'Guardar alterações' : 'Guardar registo'} <Check size={15} /></button>
           </div>
         </form>
@@ -694,6 +751,7 @@ function ResourcePage({ resource, title, description, user }) {
                   <td>{item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-PT') : '—'}</td>
                   <td>{resource === 'clients' || resource === 'services' ? <span className="status-pill">{item.status || (item.isPublished ? 'Publicado' : 'Não publicado')}</span> : <select className="status-select" aria-label="Alterar estado" value={item.status || ''} onChange={event => setItemStatus(item, event.target.value)}><option value="" disabled>Definir estado</option>{statuses.map(value => <option key={value}>{value}</option>)}</select>}</td>
                   <td>
+                    {resource === 'projects' && <button className="icon-button" type="button" onClick={() => setProjectPreview({ project: item, assets: { coverImage: null, model: null, floorPlan: null, images: [] } })} title="Pré-visualizar projecto" aria-label={`Pré-visualizar ${item.title || item.name}`}><Eye size={15} /></button>}
                     {resource === 'projects' && <label className={`icon-button project-image-upload${uploadingProject === item._id ? ' uploading' : ''}`} title="Adicionar imagens do imóvel"><input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={uploadingProject === item._id} onChange={event => { uploadProjectImages(item, Array.from(event.target.files || [])); event.target.value = '' }} /><ImagePlus size={16} /><span className="sr-only">{uploadingProject === item._id ? 'A carregar imagens' : 'Adicionar imagens do imóvel'}</span></label>}
                     {['projects', 'services'].includes(resource) && <button className="icon-button" onClick={() => startEdit(item)} title="Editar registo" aria-label={`Editar ${item.title || item.name}`}><Pencil size={15} /></button>}
                     <button className="icon-button delete-button" onClick={() => remove(item)} title="Remover do website" aria-label={`Remover ${item.title || item.name}`}><X size={15} /></button>
@@ -704,7 +762,7 @@ function ResourcePage({ resource, title, description, user }) {
           </div>
         ) : <div className="empty-list"><ClipboardList /><strong>Sem registos para apresentar</strong><span>Quando existirem registos, poderá geri-los nesta área.</span></div>}
       </section>
-      {showProjectPreview && resource === 'projects' && <ProjectPreview project={{ ...editingItem, ...form }} assets={projectAssets} onClose={() => setShowProjectPreview(false)} />}
+      {projectPreview && resource === 'projects' && <ProjectPreview project={projectPreview.project} assets={projectPreview.assets} onClose={() => setProjectPreview(null)} />}
       {processingMessage && <ProcessingOverlay message={processingMessage} progress={modelUploadProgress} />}
     </>
   )

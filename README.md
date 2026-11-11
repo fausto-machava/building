@@ -94,7 +94,7 @@ Para a lista de acesso de rede do Atlas, permita o acesso de saída do Render co
 - Páginas individuais de projecto com visualizador 3D interactivo, vistas de planta, exterior e interior, suporte a modelos GLB/OBJ e selecção de compartimentos por grupos nomeados no modelo.
 - API REST com autenticação JWT em cookie HttpOnly, papéis de utilizador, limites de tentativas de login, validação, CORS e Helmet.
 - Modelos Mongoose para utilizadores, clientes, serviços, projectos, pedidos de orçamento, propostas, notificações e registo de actividade.
-- Área administrativa com indicadores reais da API, listagens pesquisáveis e operações de gestão de clientes, pedidos, propostas, projectos e serviços; permite adicionar, editar, publicar e remover projectos e serviços apresentados no website.
+- Área administrativa com indicadores reais da API, listagens pesquisáveis e operações de gestão de clientes, pedidos, propostas, projectos e serviços; permite adicionar, editar, publicar e remover projectos e serviços apresentados no website, carregar uma imagem de capa ou indicar o seu URL e pré-visualizar o projecto com o seu modelo 3D.
 - Upload validado de documentos e imagens para Cloudinary; upload multipart directo para R2 de modelos 3D até 1 GB; notificações SMTP opcionais e geração de PDF de propostas.
 
 ## Limites do protótipo
