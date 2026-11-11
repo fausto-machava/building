@@ -3,7 +3,7 @@ services:
     name: arqcons-api
     runtime: node
     plan: free
-    buildCommand: npm ci
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start -w platform-backend
     healthCheckPath: /api/health
     envVars:
