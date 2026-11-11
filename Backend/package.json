@@ -7,24 +7,31 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "seed:admin": "node src/scripts/seedAdmin.js",
-    "seed:services": "node src/scripts/seedServices.js"
+    "seed:services": "node src/scripts/seedServices.js",
+    "prepare:model:tiles": "node src/scripts/prepareModelTiles.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1165.0",
     "@aws-sdk/s3-request-presigner": "^3.1165.0",
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
     "bcryptjs": "^2.4.3",
     "cloudinary": "^2.6.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "draco3dgltf": "^1.5.9",
     "express": "^4.21.2",
     "express-rate-limit": "^7.5.0",
     "express-validator": "^7.2.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "meshoptimizer": "^1.1.1",
     "mongoose": "^8.12.1",
     "multer": "^2.0.2",
     "nodemailer": "^10.3.1",
+    "obj2gltf": "^3.2.0",
     "pdfkit": "^0.16.0"
   }
 }

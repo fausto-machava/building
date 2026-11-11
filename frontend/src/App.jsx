@@ -8,7 +8,7 @@ import {
   Pencil, RotateCcw, Settings2, ShieldCheck, Sparkles, Users, X,
 } from 'lucide-react'
 import api, { getErrorMessage } from './services/api'
-import { uploadProjectModel } from './services/r2ModelUpload'
+import { getTilesetFilePath, uploadProjectTileset } from './services/r2ModelUpload'
 import './assets/styles/processing.css'
 
 const RequestChart = lazy(() => import('./components/admin/RequestChart'))
@@ -41,30 +41,26 @@ function getProjectPublicationMissingFields(project, hasCoverUpload = false) {
 }
 
 function ProjectPreview({ project, assets, onClose }) {
-  const [uploadedAssets, setUploadedAssets] = useState({ cover: '', model: '', floorPlan: '', images: [] })
+  const [uploadedAssets, setUploadedAssets] = useState({ cover: '', images: [] })
 
   useEffect(() => {
     const cover = assets.coverImage ? URL.createObjectURL(assets.coverImage) : ''
-    const model = assets.model ? URL.createObjectURL(assets.model) : ''
-    const floorPlan = assets.floorPlan ? URL.createObjectURL(assets.floorPlan) : ''
     const images = assets.images.map(file => ({ url: URL.createObjectURL(file), name: file.name }))
-    setUploadedAssets({ cover, model, floorPlan, images })
+    setUploadedAssets({ cover, images })
     return () => {
-      const urls = [cover, model, floorPlan, ...images.map(image => image.url)]
+      const urls = [cover, ...images.map(image => image.url)]
       urls.filter(Boolean).forEach(url => URL.revokeObjectURL(url))
     }
-  }, [assets.coverImage, assets.model, assets.floorPlan, assets.images])
+  }, [assets.coverImage, assets.images])
 
   const images = [
     ...(project.gallery || []),
     ...uploadedAssets.images,
   ]
   const coverImage = uploadedAssets.cover || project.coverImage || images[0]?.url
-  const modelUrl = uploadedAssets.model || project.model3d?.url
-  const modelFormat = assets.model
-    ? (assets.model.name.toLowerCase().endsWith('.obj') ? 'obj' : 'glb')
-    : project.model3d?.format || (project.model3d?.name?.toLowerCase().endsWith('.obj') ? 'obj' : undefined)
-  const floorPlanUrl = uploadedAssets.floorPlan || project.floorPlan?.url
+  const modelUrl = project.model3d?.url
+  const modelFormat = project.model3d?.format || (project.model3d?.name?.toLowerCase().endsWith('.obj') ? 'obj' : undefined)
+  const floorPlanUrl = project.floorPlan?.url
   const missingFields = getProjectPublicationMissingFields(project, Boolean(assets.coverImage))
 
   return <div className="project-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
@@ -85,13 +81,13 @@ function ProjectPreview({ project, assets, onClose }) {
             <span className="eyebrow">SOBRE O PROJECTO</span>
             <p>{project.description || 'A descrição do projecto será apresentada aqui.'}</p>
             <Suspense fallback={<div className="project-loading"><LoaderCircle className="spin" /> A preparar visualização 3D...</div>}>
-              <ProjectViewer modelUrl={modelUrl} modelFormat={modelFormat} floorPlanUrl={floorPlanUrl} title={project.title || 'Projecto'} />
+              <ProjectViewer modelUrl={modelUrl} modelFormat={modelFormat} modelSize={project.model3d?.size} floorPlanUrl={floorPlanUrl} title={project.title || 'Projecto'} />
             </Suspense>
+            {assets.tileset?.length > 0 && <p className="project-preview-selection">O tileset seleccionado será publicado quando guardar o projecto.</p>}
             {images.length > 0 && <>
               <h4>Imagens do projecto</h4>
               <div className="project-preview-gallery">{images.map((image, index) => <img key={`${image.url}-${index}`} src={image.url} alt={image.name || `Imagem ${index + 1} do projecto`} />)}</div>
             </>}
-            {assets.model && <p className="project-preview-selection">A pré-visualizar o modelo seleccionado: {assets.model.name}</p>}
           </div>
         </article>
         {missingFields.length > 0 && <p className="project-preview-warning" role="status">Para publicar este projecto, preencha: {missingFields.join(', ')}.</p>}
@@ -194,7 +190,7 @@ function ProjectDetails() {
     <section className="project-detail-content">
       <div className="container">
         <div className="project-description-grid"><div><span className="eyebrow">CONCEITO DO PROJECTO</span><h2>Desenhado para<br /><em>ser vivido.</em></h2></div><p>{project.description || 'Explore este projecto arquitectónico em 3D. Alterne entre as vistas da planta, exterior e interior e navegue pela cena arrastando o rato ou deslizando no ecrã.'}</p></div>
-        <Suspense fallback={<div className="project-loading"><LoaderCircle className="spin" /> A preparar visualização 3D...</div>}><ProjectViewer modelUrl={project.model3d?.url} modelFormat={project.model3d?.format || (project.model3d?.name?.toLowerCase().endsWith('.obj') ? 'obj' : undefined)} floorPlanUrl={project.floorPlan?.url} title={project.title || project.name} /></Suspense>
+        <Suspense fallback={<div className="project-loading"><LoaderCircle className="spin" /> A preparar visualização 3D...</div>}><ProjectViewer modelUrl={project.model3d?.url} modelFormat={project.model3d?.format || (project.model3d?.name?.toLowerCase().endsWith('.obj') ? 'obj' : undefined)} modelSize={project.model3d?.size} floorPlanUrl={project.floorPlan?.url} title={project.title || project.name} /></Suspense>
         <section className="property-gallery" aria-labelledby="property-gallery-title">
           <div className="property-gallery-heading"><div><span className="eyebrow">GALERIA DO IMÓVEL</span><h2 id="property-gallery-title">Imagens do projecto</h2></div><span>{galleryImages.length} {galleryImages.length === 1 ? 'imagem' : 'imagens'}</span></div>
           {galleryImages.length > 0
@@ -459,7 +455,7 @@ function ResourcePage({ resource, title, description, user }) {
   const [editingItem, setEditingItem] = useState(null)
   const [saving, setSaving] = useState(false)
   const [notice, setNotice] = useState('')
-  const [projectAssets, setProjectAssets] = useState({ coverImage: null, model: null, floorPlan: null, images: [] })
+  const [projectAssets, setProjectAssets] = useState({ coverImage: null, tileset: [], images: [] })
   const [modelUploadProgress, setModelUploadProgress] = useState(null)
   const [uploadingProject, setUploadingProject] = useState('')
   const [processingMessage, setProcessingMessage] = useState('')
@@ -495,14 +491,14 @@ function ResourcePage({ resource, title, description, user }) {
     setEditingItem(null)
     setProjectPreview(null)
     setForm({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '', isPublished: false, isFeatured: false })
-    setProjectAssets({ coverImage: null, model: null, floorPlan: null, images: [] })
+    setProjectAssets({ coverImage: null, tileset: [], images: [] })
     setShowForm(true)
   }
   function startEdit(item) {
     setEditingItem(item)
     setProjectPreview(null)
     setForm({ ...item, year: item.year ?? '', order: item.order ?? '', isPublished: Boolean(item.isPublished), isFeatured: Boolean(item.isFeatured) })
-    setProjectAssets({ coverImage: null, model: null, floorPlan: null, images: [] })
+    setProjectAssets({ coverImage: null, tileset: [], images: [] })
     setShowForm(true)
   }
   async function create(event) {
@@ -512,10 +508,6 @@ function ResourcePage({ resource, title, description, user }) {
       : []
     if (resource === 'projects' && form.isPublished && missingProjectFields.length) {
       setNotice(`Para publicar o projecto, preencha: ${missingProjectFields.join(', ')}.`)
-      return
-    }
-    if (resource === 'projects' && projectAssets.model?.size > 1024 * 1024 * 1024) {
-      setNotice('O modelo 3D não pode exceder 1 GB.')
       return
     }
     if (resource === 'projects' && projectAssets.coverImage?.size > 10 * 1024 * 1024) {
@@ -559,16 +551,6 @@ function ResourcePage({ resource, title, description, user }) {
             uploadErrors.push(getErrorMessage(reason))
           }
         }
-        if (projectAssets.floorPlan) {
-          setProcessingMessage('A carregar a planta técnica...')
-          const assets = new FormData()
-          assets.append('floorPlan', projectAssets.floorPlan)
-          try {
-            await api.post(`/projects/${data.item._id}/3d-assets`, assets, { headers: { 'Content-Type': 'multipart/form-data' } })
-          } catch (reason) {
-            uploadErrors.push(getErrorMessage(reason))
-          }
-        }
         if (form.isPublished && projectAssets.coverImage && !form.coverImage && coverUploaded) {
           try {
             await api.put(`/projects/${data.item._id}`, { isPublished: true })
@@ -576,11 +558,11 @@ function ResourcePage({ resource, title, description, user }) {
             uploadErrors.push(getErrorMessage(reason))
           }
         }
-        if (projectAssets.model) {
-          setProcessingMessage('A enviar o modelo 3D...')
+        if (projectAssets.tileset.length) {
+          setProcessingMessage('A publicar o modelo 3D em níveis de detalhe...')
           setModelUploadProgress(0)
           try {
-            await uploadProjectModel(data.item._id, projectAssets.model, setModelUploadProgress)
+            await uploadProjectTileset(data.item._id, projectAssets.tileset, setModelUploadProgress)
           } catch (reason) {
             uploadErrors.push(reason.message || getErrorMessage(reason))
           } finally {
@@ -604,7 +586,7 @@ function ResourcePage({ resource, title, description, user }) {
       setShowForm(false)
       setEditingItem(null)
       setForm({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '' })
-      setProjectAssets({ coverImage: null, model: null, floorPlan: null, images: [] })
+      setProjectAssets({ coverImage: null, tileset: [], images: [] })
       setNotice(successMessage)
       await load()
     }
@@ -722,9 +704,26 @@ function ResourcePage({ resource, title, description, user }) {
                 <input type="checkbox" checked={Boolean(form.isPublished)} onChange={event => setForm(current => ({ ...current, isPublished: event.target.checked }))} />
                 Publicar projecto no portfólio
               </label>
-              <label>Modelo 3D GLB ou OBJ <span>(opcional, máx. 1 GB; seleccione para substituir o actual)</span><input type="file" accept=".glb,.obj,model/gltf-binary,model/obj,text/plain,application/octet-stream" onChange={event => setProjectAssets(current => ({ ...current, model: event.target.files?.[0] || null }))} /></label>
+              <label>Modelo 3D <span>(seleccione a pasta de streaming/LOD criada a partir do seu ficheiro OBJ ou GLB)</span><input type="file" accept=".json,.glb" webkitdirectory="" directory="" onChange={event => {
+                const files = Array.from(event.target.files || [])
+                const expected = ['tileset.json', 'lod-0.glb', 'lod-1.glb', 'lod-2.glb']
+                const paths = files.map(getTilesetFilePath)
+                const valid = files.length === expected.length
+                  && expected.every(path => paths.includes(path))
+                  && files.every(file => file.size > 0 && file.size <= 1024 * 1024 * 1024)
+                  && files.find(file => getTilesetFilePath(file) === 'tileset.json')?.size <= 1024 * 1024
+                  && files.reduce((total, file) => total + file.size, 0) <= 3 * 1024 * 1024 * 1024
+                if (files.length && !valid) {
+                  setNotice('Seleccione a pasta com tileset.json e lod-0.glb, lod-1.glb e lod-2.glb, até 3 GiB no total.')
+                  event.target.value = ''
+                  setProjectAssets(current => ({ ...current, tileset: [] }))
+                  return
+                }
+                setNotice('')
+                setProjectAssets(current => ({ ...current, tileset: files }))
+              }} /></label>
+              {projectAssets.tileset.length > 0 && <span className="project-cover-filename">{projectAssets.tileset.length} ficheiros de tileset seleccionados ({(projectAssets.tileset.reduce((total, file) => total + file.size, 0) / 1024 / 1024).toFixed(1)} MiB)</span>}
               {modelUploadProgress !== null && <div className="model-upload-progress" role="status" aria-live="polite"><progress max="100" value={modelUploadProgress} /><span>A enviar modelo 3D: {modelUploadProgress}%</span></div>}
-              <label>Planta técnica <span>(opcional, JPG, PNG ou WebP; seleccione para substituir a actual)</span><input type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setProjectAssets(current => ({ ...current, floorPlan: event.target.files?.[0] || null }))} /></label>
               <label>Imagens do imóvel <span>(até 10 por vez, JPG, PNG ou WebP; máx. 10 MB cada)</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => { const images = Array.from(event.target.files || []); if (images.length > 10) { setNotice('Seleccione no máximo 10 imagens de cada vez.'); event.target.value = ''; return }; setNotice(''); setProjectAssets(current => ({ ...current, images })) }} /></label>
             </div>
           )}
@@ -751,7 +750,7 @@ function ResourcePage({ resource, title, description, user }) {
                   <td>{item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-PT') : '—'}</td>
                   <td>{resource === 'clients' || resource === 'services' ? <span className="status-pill">{item.status || (item.isPublished ? 'Publicado' : 'Não publicado')}</span> : <select className="status-select" aria-label="Alterar estado" value={item.status || ''} onChange={event => setItemStatus(item, event.target.value)}><option value="" disabled>Definir estado</option>{statuses.map(value => <option key={value}>{value}</option>)}</select>}</td>
                   <td>
-                    {resource === 'projects' && <button className="icon-button" type="button" onClick={() => setProjectPreview({ project: item, assets: { coverImage: null, model: null, floorPlan: null, images: [] } })} title="Pré-visualizar projecto" aria-label={`Pré-visualizar ${item.title || item.name}`}><Eye size={15} /></button>}
+                    {resource === 'projects' && <button className="icon-button" type="button" onClick={() => setProjectPreview({ project: item, assets: { coverImage: null, tileset: [], images: [] } })} title="Pré-visualizar projecto" aria-label={`Pré-visualizar ${item.title || item.name}`}><Eye size={15} /></button>}
                     {resource === 'projects' && <label className={`icon-button project-image-upload${uploadingProject === item._id ? ' uploading' : ''}`} title="Adicionar imagens do imóvel"><input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={uploadingProject === item._id} onChange={event => { uploadProjectImages(item, Array.from(event.target.files || [])); event.target.value = '' }} /><ImagePlus size={16} /><span className="sr-only">{uploadingProject === item._id ? 'A carregar imagens' : 'Adicionar imagens do imóvel'}</span></label>}
                     {['projects', 'services'].includes(resource) && <button className="icon-button" onClick={() => startEdit(item)} title="Editar registo" aria-label={`Editar ${item.title || item.name}`}><Pencil size={15} /></button>}
                     <button className="icon-button delete-button" onClick={() => remove(item)} title="Remover do website" aria-label={`Remover ${item.title || item.name}`}><X size={15} /></button>

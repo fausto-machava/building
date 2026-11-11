@@ -1,8 +1,12 @@
 import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas, useLoader } from '@react-three/fiber'
+import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
 import { Center, OrbitControls } from '@react-three/drei'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
+import { Sphere } from 'three'
+import { TilesPlugin, TilesRenderer } from '3d-tiles-renderer/r3f'
+import { GLTFExtensionsPlugin } from '3d-tiles-renderer/three/plugins'
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js'
 import { Box, RotateCcw } from 'lucide-react'
 
 const cameraViews = {
@@ -10,6 +14,8 @@ const cameraViews = {
   exterior: { position: [10, 7, 11], target: [0, 1, 0] },
   interior: { position: [3.7, 2.2, 3.8], target: [0, 1, 0] },
 }
+const maxViewerModelBytes = 50 * 1024 * 1024
+const tilesetPluginOptions = { meshoptDecoder: MeshoptDecoder }
 
 function DemoHouse({ mode }) {
   const cutaway = mode !== 'exterior'
@@ -142,6 +148,83 @@ function ProjectModel({ url, format, selectedPart, onPartsChange, onModelLoaded 
   return <Center key={selectedPart || 'all'}><primitive object={displayedScene} /></Center>
 }
 
+function setTilesCameraView(camera, controls, bounds, mode) {
+  const radius = Math.max(bounds.radius, 0.5)
+  const distance = radius * 2.8
+  const position = mode === 'plan'
+    ? [bounds.center.x, bounds.center.y + distance * 1.8, bounds.center.z + 0.01]
+    : mode === 'interior'
+      ? [bounds.center.x + radius * 0.8, bounds.center.y + radius * 0.45, bounds.center.z + radius * 0.8]
+      : [bounds.center.x + distance, bounds.center.y + distance * 0.7, bounds.center.z + distance]
+  controls.target.copy(bounds.center)
+  camera.position.set(...position)
+  camera.fov = mode === 'plan' ? 42 : 46
+  camera.near = Math.max(radius / 1000, 0.01)
+  camera.far = Math.max(radius * 100, 1000)
+  camera.updateProjectionMatrix()
+  controls.update()
+}
+
+function ProjectTiles({ url, mode, reset, controlsRef, onModelLoaded, onError }) {
+  const rendererRef = useRef(null)
+  const bounds = useMemo(() => new Sphere(), [])
+  const fitted = useRef(false)
+  const fittedView = useRef('')
+  const reportedError = useRef(false)
+  const hasLoadedTile = useRef(false)
+  const { camera } = useThree()
+
+  useEffect(() => {
+    fitted.current = false
+    fittedView.current = ''
+    reportedError.current = false
+    hasLoadedTile.current = false
+  }, [url])
+
+  useFrame(() => {
+    if (!controlsRef.current) return
+    const tilesRenderer = rendererRef.current
+    if (!tilesRenderer) return
+    const tilesGroup = tilesRenderer.group
+    if (tilesGroup.rotation.x !== -Math.PI / 2) {
+      tilesGroup.rotation.x = -Math.PI / 2
+      tilesGroup.updateMatrixWorld(true)
+    }
+    if (!fitted.current) {
+      if (!tilesRenderer.getBoundingSphere(bounds) || bounds.radius <= 0) return
+      bounds.applyMatrix4(tilesGroup.matrixWorld)
+      fitted.current = true
+    }
+    const view = `${mode}-${reset}`
+    if (fittedView.current !== view) {
+      setTilesCameraView(camera, controlsRef.current, bounds, mode)
+      fittedView.current = view
+    }
+  })
+
+  return (
+    <TilesRenderer
+      ref={rendererRef}
+      url={url}
+      errorTarget={24}
+      lruCache-maxBytesSize={128 * 1024 * 1024}
+      lruCache-minBytesSize={32 * 1024 * 1024}
+      onLoadModel={() => {
+        hasLoadedTile.current = true
+        onModelLoaded(url)
+      }}
+      onLoadError={event => {
+        if (!reportedError.current && !hasLoadedTile.current) {
+          reportedError.current = true
+          onError(event.error)
+        }
+      }}
+    >
+      <TilesPlugin plugin={GLTFExtensionsPlugin} args={tilesetPluginOptions} />
+    </TilesRenderer>
+  )
+}
+
 class ModelErrorBoundary extends Component {
   constructor(props) {
     super(props)
@@ -161,15 +244,21 @@ class ModelErrorBoundary extends Component {
   }
 }
 
-export default function ProjectViewer({ modelUrl, modelFormat, floorPlanUrl, title }) {
+export default function ProjectViewer({ modelUrl, modelFormat, modelSize, floorPlanUrl, title }) {
   const [mode, setMode] = useState('plan')
   const [reset, setReset] = useState(0)
   const [parts, setParts] = useState([])
   const [selectedPart, setSelectedPart] = useState('')
   const [readyModelUrl, setReadyModelUrl] = useState('')
+  const [loadableModelUrl, setLoadableModelUrl] = useState('')
   const [loadedModelUrl, setLoadedModelUrl] = useState('')
   const [modelError, setModelError] = useState(null)
+  const [modelSizeStatus, setModelSizeStatus] = useState('idle')
+  const [checkedModelSize, setCheckedModelSize] = useState(0)
+  const [sizeCheckError, setSizeCheckError] = useState('')
+  const [sizeCheckAttempt, setSizeCheckAttempt] = useState(0)
   const canvasRef = useRef(null)
+  const controlsRef = useRef(null)
   const hasModel = Boolean(modelUrl)
   const format = modelFormat || (/\.obj(?:$|[?#])/i.test(modelUrl || '') ? 'obj' : 'glb')
   const updateParts = useCallback(nextParts => setParts(nextParts), [])
@@ -177,8 +266,12 @@ export default function ProjectViewer({ modelUrl, modelFormat, floorPlanUrl, tit
   useEffect(() => {
     setParts([])
     setSelectedPart('')
+    setLoadableModelUrl('')
     setLoadedModelUrl('')
     setModelError(null)
+    setModelSizeStatus('idle')
+    setCheckedModelSize(0)
+    setSizeCheckError('')
     if (!modelUrl) return undefined
 
     const canvasElement = canvasRef.current
@@ -195,13 +288,79 @@ export default function ProjectViewer({ modelUrl, modelFormat, floorPlanUrl, tit
     }, { rootMargin: '200px' })
     observer.observe(canvasElement)
     return () => observer.disconnect()
-  }, [modelUrl])
+  }, [modelUrl, format])
+
+  useEffect(() => {
+    if (!modelUrl || readyModelUrl !== modelUrl) return undefined
+
+    if (format === '3dtiles') {
+      setModelSizeStatus('loading')
+      setLoadableModelUrl(modelUrl)
+      return () => setLoadableModelUrl('')
+    }
+
+    const controller = new AbortController()
+    let active = true
+    const timeout = window.setTimeout(() => controller.abort(), 10000)
+
+    async function checkModelSize() {
+      setModelSizeStatus('checking')
+      setSizeCheckError('')
+      try {
+        let size = Number(modelSize)
+        if (!Number.isSafeInteger(size) || size <= 0) {
+          const response = await fetch(modelUrl, { method: 'HEAD', mode: 'cors', signal: controller.signal })
+          if (!response.ok) throw new Error(`O servidor respondeu com HTTP ${response.status}.`)
+          size = Number(response.headers.get('content-length'))
+        }
+
+        if (!Number.isSafeInteger(size) || size <= 0) {
+          throw new Error('O servidor não informou o tamanho do ficheiro.')
+        }
+        if (!active) return
+
+        setCheckedModelSize(size)
+        if (size > maxViewerModelBytes) {
+          setModelSizeStatus('too-large')
+          return
+        }
+
+        setModelSizeStatus('loading')
+        setLoadableModelUrl(modelUrl)
+      } catch (error) {
+        if (!active || controller.signal.aborted) {
+          if (active) {
+            setModelSizeStatus('error')
+            setSizeCheckError('A verificação do tamanho excedeu o tempo limite.')
+          }
+          return
+        }
+        setModelSizeStatus('error')
+        setSizeCheckError(error.message || 'Não foi possível verificar o tamanho do ficheiro.')
+      } finally {
+        window.clearTimeout(timeout)
+      }
+    }
+
+    checkModelSize()
+    return () => {
+      active = false
+      controller.abort()
+      window.clearTimeout(timeout)
+    }
+  }, [modelUrl, modelSize, format, readyModelUrl, sizeCheckAttempt])
 
   function retryModel() {
-    useLoader.clear(format === 'obj' ? OBJLoader : GLTFLoader, modelUrl)
+    if (modelSizeStatus === 'error') {
+      setSizeCheckAttempt(value => value + 1)
+      return
+    }
+    if (format !== '3dtiles') useLoader.clear(format === 'obj' ? OBJLoader : GLTFLoader, modelUrl)
     setModelError(null)
     setLoadedModelUrl('')
-    setReadyModelUrl(modelUrl)
+    setLoadableModelUrl('')
+    setModelSizeStatus('checking')
+    setSizeCheckAttempt(value => value + 1)
     setReset(value => value + 1)
   }
 
@@ -245,8 +404,20 @@ export default function ProjectViewer({ modelUrl, modelFormat, floorPlanUrl, tit
           {hasModel && readyModelUrl !== modelUrl && (
             <div className="viewer-model-loading" role="status">O modelo 3D será carregado quando esta área estiver próxima do ecrã.</div>
           )}
-          {hasModel && readyModelUrl === modelUrl && loadedModelUrl !== modelUrl && !modelError && (
-            <div className="viewer-model-loading" role="status">A carregar modelo 3D...</div>
+          {hasModel && readyModelUrl === modelUrl && ['checking', 'loading'].includes(modelSizeStatus) && loadedModelUrl !== modelUrl && !modelError && (
+            <div className="viewer-model-loading" role="status">{modelSizeStatus === 'checking' ? 'A verificar o tamanho do modelo 3D...' : 'A carregar modelo 3D...'}</div>
+          )}
+          {hasModel && modelSizeStatus === 'too-large' && (
+            <div className="viewer-model-error" role="alert">
+              <p>Este modelo tem {(checkedModelSize / (1024 * 1024)).toLocaleString('pt-PT', { maximumFractionDigits: 0 })} MiB. Para evitar bloquear o navegador, a visualização interactiva está limitada a 50 MiB.</p>
+              <a href={modelUrl} target="_blank" rel="noreferrer">Abrir o ficheiro original</a>
+            </div>
+          )}
+          {hasModel && modelSizeStatus === 'error' && (
+            <div className="viewer-model-error" role="alert">
+              <p>Não foi possível verificar o tamanho do modelo. Por segurança, não será carregado no navegador. {sizeCheckError}</p>
+              <button type="button" onClick={retryModel}>Tentar novamente</button>
+            </div>
           )}
           {modelError && (
             <div className="viewer-model-error" role="alert">
@@ -257,7 +428,7 @@ export default function ProjectViewer({ modelUrl, modelFormat, floorPlanUrl, tit
           <ModelErrorBoundary key={`${modelUrl || 'demo'}-${format}-${reset}`} onError={setModelError}>
             {(error) => (
               <Canvas
-                key={`${mode}-${reset}-${Boolean(error)}`}
+                key={format === '3dtiles' ? 'tiles' : `${mode}-${reset}-${Boolean(error)}`}
                 camera={{ position: cameraViews[mode].position, fov: mode === 'plan' ? 42 : 46 }}
                 shadows
                 dpr={[1, 1.5]}
@@ -268,15 +439,20 @@ export default function ProjectViewer({ modelUrl, modelFormat, floorPlanUrl, tit
                 <directionalLight position={[7, 10, 5]} intensity={2} castShadow />
                 <directionalLight position={[-5, 4, -4]} intensity={0.55} />
                 <Suspense fallback={null}>
-                  {hasModel && readyModelUrl === modelUrl && !error ? <ProjectModel url={modelUrl} format={format} selectedPart={selectedPart} onPartsChange={updateParts} onModelLoaded={setLoadedModelUrl} /> : !hasModel ? <DemoHouse mode={mode} /> : null}
+                  {hasModel && loadableModelUrl === modelUrl && !error
+                    ? format === '3dtiles'
+                      ? <ProjectTiles url={modelUrl} mode={mode} reset={reset} controlsRef={controlsRef} onModelLoaded={setLoadedModelUrl} onError={setModelError} />
+                      : <ProjectModel url={modelUrl} format={format} selectedPart={selectedPart} onPartsChange={updateParts} onModelLoaded={setLoadedModelUrl} />
+                    : !hasModel ? <DemoHouse mode={mode} /> : null}
                 </Suspense>
                 <OrbitControls
+                  ref={controlsRef}
                   key={`${mode}-${reset}`}
                   makeDefault
                   target={cameraViews[mode].target}
                   enableDamping
-                  minDistance={mode === 'interior' ? 0.4 : 2}
-                  maxDistance={mode === 'interior' ? 12 : 30}
+                  minDistance={format === '3dtiles' ? 0.1 : mode === 'interior' ? 0.4 : 2}
+                  maxDistance={format === '3dtiles' ? 1000000 : mode === 'interior' ? 12 : 30}
                   maxPolarAngle={mode === 'plan' ? Math.PI / 2.05 : Math.PI / 1.9}
                   autoRotate={mode === 'exterior'}
                   autoRotateSpeed={0.45}

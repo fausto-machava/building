@@ -277,6 +277,12 @@
   font-weight: 600;
 }
 
+.viewer-model-error a {
+  color: var(--navy);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 .model-upload-progress {
   grid-column: 1 / -1;
   display: flex;

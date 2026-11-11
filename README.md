@@ -63,7 +63,17 @@ Aplicação de demonstração para uma empresa de arquitectura e engenharia, com
 5. Carregue o catálogo inicial de serviços com `npm run seed:services`.
 6. Inicie a aplicação com `npm run dev`. O website estará em `http://localhost:5173` e a API em `http://localhost:5000`.
 
-O utilizador administrador é criado exclusivamente pelo script de seed; não existe registo público. Defina `CLIENT_ORIGIN` como uma lista separada por vírgulas dos domínios permitidos em produção. Configure Cloudinary para uploads de documentos, plantas e imagens. Os modelos 3D GLB/OBJ (até 1 GB) são enviados directamente do navegador para o Cloudflare R2 em partes de 16 MiB, com até quatro partes em simultâneo, novas tentativas e indicador de progresso; o ficheiro não atravessa a memória da API. O visualizador só começa a descarregar o modelo quando se aproxima da área visível, mas modelos muito grandes ainda exigem boa memória e capacidade gráfica no dispositivo do visitante. Para notificações por email configure SMTP. Sem esses serviços configurados, pedidos sem anexos e mensagens são guardados no MongoDB, mas as respectivas integrações externas não são executadas.
+O utilizador administrador é criado exclusivamente pelo script de seed; não existe registo público. Defina `CLIENT_ORIGIN` como uma lista separada por vírgulas dos domínios permitidos em produção. Configure Cloudinary para uploads de documentos, plantas e imagens. Os modelos GLB/OBJ até 1 GiB são enviados directamente do navegador para o Cloudflare R2 em partes de 16 MiB, sem atravessar a memória da API. Para ficheiros grandes, prepare localmente um tileset com níveis de detalhe (ver abaixo): o visualizador transfere progressivamente apenas os níveis necessários, sem exigir o download integral do modelo original. O carregamento directo de GLB/OBJ no visualizador permanece limitado a 50 MiB. Para notificações por email configure SMTP. Sem esses serviços configurados, pedidos sem anexos e mensagens são guardados no MongoDB, mas as respectivas integrações externas não são executadas.
+
+### Modelos 3D com streaming e níveis de detalhe
+
+Para evitar que modelos grandes sejam descarregados e descodificados integralmente no navegador, converta-os localmente num tileset 3D. A conversão não envia o modelo a um serviço externo e pode exigir bastante memória e tempo no computador que a executa. O ficheiro de origem deve ter até 1 GiB. A pasta de saída ainda não pode existir:
+
+```powershell
+npm run prepare:model:tiles -w platform-backend -- "C:\modelos\edificio.glb" "C:\modelos\edificio-tiles"
+```
+
+Também são aceites ficheiros OBJ; mantenha os respectivos ficheiros MTL e texturas na mesma pasta do OBJ. A ferramenta cria `tileset.json` e três níveis GLB (`lod-0.glb`, `lod-1.glb`, `lod-2.glb`). No painel de administração, edite o projecto, seleccione a pasta `edificio-tiles` no campo **Modelo 3D para streaming/LOD** e guarde. Os ficheiros são enviados directamente para o R2; o painel valida o índice e só publica o tileset quando os três níveis estão disponíveis. O limite é 1 GiB por ficheiro e 3 GiB no conjunto. O visualizador selecciona o detalhe conforme a distância e mantém uma cache limitada para reduzir o uso de memória.
 
 ### Configuração do Cloudflare R2
 

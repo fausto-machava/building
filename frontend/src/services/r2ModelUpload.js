@@ -1,8 +1,53 @@
 import api, { getErrorMessage } from './api'
 
 const maxModelBytes = 1024 * 1024 * 1024
+const maxTilesetBytes = maxModelBytes * 3
 const concurrentParts = 4
 const maxAttempts = 3
+const concurrentTiles = 2
+
+export function getTilesetFilePath(file) {
+  const relativePath = file.webkitRelativePath || file.name
+  const segments = relativePath.split(/[\\/]/)
+  return segments.slice(1).join('/') || file.name
+}
+
+function validateTilesetFiles(files) {
+  const expectedPaths = ['tileset.json', 'lod-0.glb', 'lod-1.glb', 'lod-2.glb']
+  const mapped = files.map(file => ({ file, path: getTilesetFilePath(file) }))
+  const paths = mapped.map(item => item.path)
+  const totalSize = mapped.reduce((total, item) => total + item.file.size, 0)
+  if (mapped.length !== expectedPaths.length
+    || expectedPaths.some(path => !paths.includes(path))
+    || mapped.some(({ file, path }) => !expectedPaths.includes(path) || !file.size || file.size > maxModelBytes)
+    || mapped.find(item => item.path === 'tileset.json').file.size > 1024 * 1024
+    || totalSize > maxTilesetBytes) {
+    throw new Error('Seleccione uma pasta com tileset.json e lod-0.glb, lod-1.glb e lod-2.glb, até 3 GiB no total.')
+  }
+  return { mapped, totalSize }
+}
+
+function uploadTileFile(url, file, contentType, onProgress) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('PUT', url)
+    request.setRequestHeader('Content-Type', contentType)
+    request.setRequestHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    request.upload.onprogress = event => {
+      if (event.lengthComputable) onProgress(event.loaded)
+    }
+    request.onerror = () => reject(new Error('Falha de rede ao enviar um nível de detalhe para o Cloudflare R2.'))
+    request.onabort = () => reject(new Error('O envio do tileset foi cancelado.'))
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(`O Cloudflare R2 rejeitou um ficheiro do tileset (HTTP ${request.status}).`))
+        return
+      }
+      resolve()
+    }
+    request.send(file)
+  })
+}
 
 function uploadPart(url, blob, onProgress) {
   return new Promise((resolve, reject) => {
@@ -158,5 +203,63 @@ export async function uploadProjectModel(projectId, file, onProgress) {
     if (!hasInvalidUploadSession(error)) throw error
     onProgress(0)
     return uploadProjectModelAttempt(projectId, file, format, onProgress)
+  }
+}
+
+export async function uploadProjectTileset(projectId, files, onProgress) {
+  const { mapped, totalSize } = validateTilesetFiles(Array.from(files))
+  const { data: session } = await api.post(`/projects/${projectId}/3d-assets/tileset/presign`, {
+    files: mapped.map(({ file, path }) => ({ path, size: file.size })),
+  })
+  const urls = new Map(session.files.map(item => [item.path, item.url]))
+  const loadedBytes = new Map(mapped.map(({ path }) => [path, 0]))
+  let nextFile = 0
+  let failure
+  const updateProgress = () => {
+    const loaded = [...loadedBytes.values()].reduce((total, bytes) => total + bytes, 0)
+    onProgress(Math.min(99, Math.floor(loaded / totalSize * 100)))
+  }
+  const workers = Array.from({ length: Math.min(concurrentTiles, mapped.length) }, async () => {
+    while (!failure) {
+      const index = nextFile
+      nextFile += 1
+      if (index >= mapped.length) return
+      const { file, path } = mapped[index]
+      const contentType = path === 'tileset.json' ? 'application/json' : 'model/gltf-binary'
+      try {
+        await uploadTileFile(urls.get(path), file, contentType, loaded => {
+          loadedBytes.set(path, loaded)
+          updateProgress()
+        })
+        loadedBytes.set(path, file.size)
+        updateProgress()
+      } catch (error) {
+        failure = error
+      }
+    }
+  })
+
+  try {
+    await Promise.all(workers)
+    if (failure) throw failure
+    const relativePath = mapped[0].file.webkitRelativePath || ''
+    const name = relativePath.split(/[\\/]/)[0] || 'Modelo optimizado'
+    const { data } = await api.post(`/projects/${projectId}/3d-assets/tileset/publish`, {
+      bundleId: session.bundleId,
+      name,
+    })
+    onProgress(100)
+    return data
+  } catch (error) {
+    try {
+      await api.post(`/projects/${projectId}/3d-assets/tileset/abort`, { bundleId: session.bundleId })
+    } catch (cleanupError) {
+      if (cleanupError.response?.status !== 404 && cleanupError.response?.status !== 409) {
+        const uploadError = error.response ? getErrorMessage(error) : error.message || getErrorMessage(error)
+        throw new Error(`${uploadError} Não foi possível limpar os ficheiros temporários R2: ${getErrorMessage(cleanupError)}`)
+      }
+    }
+    const uploadError = error.response ? getErrorMessage(error) : error.message || getErrorMessage(error)
+    throw new Error(`Falha ao publicar o tileset: ${uploadError}`, { cause: error })
   }
 }

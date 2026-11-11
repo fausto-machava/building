@@ -16,7 +16,11 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
   UploadPartCommand,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -26,6 +30,17 @@ import { getR2BucketName, getR2Client, getR2PublicUrl, isR2Configured } from './
 
 const app = express()
 const production = process.env.NODE_ENV === 'production'
+const devFallbackJwtSecret = 'development-secret-key-do-not-use-in-production'
+
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET || (production ? undefined : devFallbackJwtSecret)
+  if (!secret || secret.length < 32) {
+    throw new Error('JWT_SECRET must be set to a random value of at least 32 characters.')
+  }
+  return secret
+}
+if (production) getJwtSecret()
+
 const configuredOrigins = (process.env.CLIENT_ORIGIN || (production ? '' : 'http://localhost:5173'))
   .split(',')
   .map(value => value.trim().replace(/\/+$/, ''))
@@ -34,10 +49,6 @@ const allowedOrigins = [...new Set([
   ...configuredOrigins,
   ...(production ? ['https://arqcons.vercel.app'] : []),
 ])]
-
-if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-  throw new Error('JWT_SECRET must be set to a random value of at least 32 characters.')
-}
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -109,7 +120,7 @@ function getModelUploadSession(req) {
     || typeof uploadToken !== 'string' || uploadToken.length > 4096) return null
   const projectId = new mongoose.Types.ObjectId(req.params.id).toString()
   try {
-    const session = jwt.verify(uploadToken, process.env.JWT_SECRET, {
+    const session = jwt.verify(uploadToken, getJwtSecret(), {
       issuer: 'arqcons-platform',
       audience: 'r2-model-upload',
     })
@@ -130,7 +141,7 @@ function authenticate(req, res, next) {
   const token = req.cookies?.session || req.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (!token) return res.status(401).json({ message: 'Autenticação necessária.' })
   try {
-    req.auth = jwt.verify(token, process.env.JWT_SECRET, { issuer: 'arqcons-platform' })
+    req.auth = jwt.verify(token, getJwtSecret(), { issuer: 'arqcons-platform' })
     next()
   } catch {
     return res.status(401).json({ message: 'Sessão inválida ou expirada.' })
@@ -154,6 +165,70 @@ async function logActivity(actor, action, entity, entityId, details = '') {
   await ActivityLog.create({ actor, action, entity, entityId, details })
 }
 
+async function deleteR2Prefix(prefix) {
+  const client = getR2Client()
+  let continuationToken
+  do {
+    const page = await client.send(new ListObjectsV2Command({
+      Bucket: getR2BucketName(),
+      Prefix: prefix,
+      ContinuationToken: continuationToken,
+    }))
+    const objects = (page.Contents || []).map(({ Key }) => ({ Key }))
+    if (objects.length) {
+      const result = await client.send(new DeleteObjectsCommand({
+        Bucket: getR2BucketName(),
+        Delete: { Objects: objects, Quiet: true },
+      }))
+      if (result.Errors?.length) throw new Error(`O Cloudflare R2 não conseguiu remover ${result.Errors.length} ficheiro(s) do tileset.`)
+    }
+    continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined
+  } while (continuationToken)
+}
+
+async function deleteR2ModelAsset(model) {
+  if (model?.storage !== 'r2' || !model.publicId) return
+  if (model.format === '3dtiles') {
+    await deleteR2Prefix(`${model.publicId.replace(/\/+$/, '')}/`)
+    return
+  }
+  await getR2Client().send(new DeleteObjectCommand({
+    Bucket: getR2BucketName(),
+    Key: model.publicId,
+  }))
+}
+
+function isValidTilesetManifest(tileset) {
+  const hasOnlyKeys = (value, allowedKeys) => value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).every(key => allowedKeys.includes(key))
+  if (!hasOnlyKeys(tileset, ['asset', 'geometricError', 'root'])
+    || !hasOnlyKeys(tileset.asset, ['version', 'gltfUpAxis'])
+    || !hasOnlyKeys(tileset.root, ['boundingVolume', 'geometricError', 'content', 'refine', 'children'])) return false
+  if (tileset?.asset?.version !== '1.1' || tileset.asset.gltfUpAxis !== 'Y') return false
+  const expectedUris = ['lod-2.glb', 'lod-1.glb', 'lod-0.glb']
+  let tile = tileset.root
+  for (let index = 0; index < expectedUris.length; index += 1) {
+    const tileKeys = index < expectedUris.length - 1
+      ? ['boundingVolume', 'geometricError', 'content', 'refine', 'children']
+      : ['boundingVolume', 'geometricError', 'content']
+    if (!hasOnlyKeys(tile, tileKeys)
+      || !hasOnlyKeys(tile.boundingVolume, ['box'])
+      || !hasOnlyKeys(tile.content, ['uri'])
+      || !Array.isArray(tile.boundingVolume.box) || tile.boundingVolume.box.length !== 12
+      || tile.boundingVolume.box.some(value => !Number.isFinite(value))
+      || tile.content?.uri !== expectedUris[index]
+      || !Number.isFinite(tile.geometricError) || tile.geometricError < 0) return false
+    if (index < expectedUris.length - 1) {
+      if (tile.refine !== 'REPLACE' || !Array.isArray(tile.children) || tile.children.length !== 1
+        || tile.children[0].geometricError >= tile.geometricError) return false
+      tile = tile.children[0]
+    } else if (tile.geometricError !== 0 || (tile.children && tile.children.length)) {
+      return false
+    }
+  }
+  return Number.isFinite(tileset.geometricError) && tileset.geometricError >= tileset.root.geometricError
+}
+
 function cookieOptions() {
   return { httpOnly: true, secure: production, sameSite: production ? 'none' : 'strict', maxAge: 8 * 60 * 60 * 1000, path: '/api' }
 }
@@ -166,7 +241,7 @@ app.post('/api/auth/login', [
   try {
     const user = await User.findOne({ email: req.body.email, isActive: true }).select('+password')
     if (!user || !(await user.verifyPassword(req.body.password))) return res.status(401).json({ message: 'Email ou palavra-passe incorrectos.' })
-    const token = jwt.sign({ sub: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '8h', issuer: 'arqcons-platform' })
+    const token = jwt.sign({ sub: user.id, role: user.role }, getJwtSecret(), { expiresIn: '8h', issuer: 'arqcons-platform' })
     res.cookie('session', token, cookieOptions())
     return res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role } })
   } catch (error) { next(error) }
@@ -378,6 +453,118 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
         res.json({ item: project })
       } catch (error) { next(error) }
     })
+    router.post('/:id/3d-assets/tileset/presign', authenticate, authorize(allowedRoles), async (req, res, next) => {
+      try {
+        if (!isR2Configured()) return res.status(503).json({ message: 'Configure o Cloudflare R2 no backend para carregar modelos 3D.' })
+        if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Projecto não encontrado.' })
+        const files = req.body.files
+        const expectedPaths = ['tileset.json', 'lod-0.glb', 'lod-1.glb', 'lod-2.glb']
+        if (!Array.isArray(files) || files.length !== expectedPaths.length
+          || expectedPaths.some(path => !files.some(file => file?.path === path))
+          || files.some(file => !expectedPaths.includes(file?.path)
+            || !Number.isSafeInteger(file.size) || file.size < 1
+            || file.size > modelMaxBytes
+            || (file.path === 'tileset.json' && file.size > 1024 * 1024))
+          || files.reduce((total, file) => total + file.size, 0) > 3 * modelMaxBytes) {
+          return res.status(400).json({ message: 'A pasta deve conter tileset.json e os três níveis lod-0.glb, lod-1.glb e lod-2.glb, sem exceder 3 GiB no total.' })
+        }
+
+        const project = await Project.findById(req.params.id).select('_id')
+        if (!project) return res.status(404).json({ message: 'Projecto não encontrado.' })
+
+        const bundleId = randomUUID()
+        const prefix = `arqcons/projects/${project.id}/tilesets/${bundleId}`
+        const client = getR2Client()
+        const uploads = await Promise.all(files.map(async file => ({
+          path: file.path,
+          url: await getSignedUrl(client, new PutObjectCommand({
+            Bucket: getR2BucketName(),
+            Key: `${prefix}/${file.path}`,
+            ContentType: file.path === 'tileset.json' ? 'application/json' : 'model/gltf-binary',
+            CacheControl: 'public, max-age=31536000, immutable',
+          }), { expiresIn: 6 * 60 * 60 }),
+        })))
+        res.status(201).json({ bundleId, files: uploads })
+      } catch (error) { next(error) }
+    })
+
+    router.post('/:id/3d-assets/tileset/publish', authenticate, authorize(allowedRoles), async (req, res, next) => {
+      try {
+        if (!isR2Configured()) return res.status(503).json({ message: 'Configure o Cloudflare R2 no backend para carregar modelos 3D.' })
+        if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: 'Projecto não encontrado.' })
+        const { bundleId, name } = req.body
+        if (typeof bundleId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bundleId)
+          || typeof name !== 'string' || !name.trim() || name.trim().length > 255) {
+          return res.status(400).json({ message: 'Dados do modelo 3D inválidos.' })
+        }
+
+        const project = await Project.findById(req.params.id)
+        if (!project) return res.status(404).json({ message: 'Projecto não encontrado.' })
+
+        const client = getR2Client()
+        const prefix = `arqcons/projects/${project.id}/tilesets/${bundleId}`
+        const manifestKey = `${prefix}/tileset.json`
+        const manifestHead = await client.send(new HeadObjectCommand({ Bucket: getR2BucketName(), Key: manifestKey }))
+        if (!manifestHead.ContentLength || manifestHead.ContentLength > 1024 * 1024) {
+          return res.status(400).json({ message: 'O índice do tileset está vazio ou excede 1 MiB.' })
+        }
+        const manifestObject = await client.send(new GetObjectCommand({ Bucket: getR2BucketName(), Key: manifestKey }))
+        let tileset
+        try {
+          tileset = JSON.parse(await manifestObject.Body.transformToString())
+        } catch {
+          return res.status(400).json({ message: 'O índice do tileset não contém JSON válido.' })
+        }
+        if (!isValidTilesetManifest(tileset)) {
+          return res.status(400).json({ message: 'O índice deve descrever os três níveis de detalhe GLB suportados.' })
+        }
+
+        const tilePaths = ['lod-0.glb', 'lod-1.glb', 'lod-2.glb']
+        const tileHeads = await Promise.all(tilePaths.map(path => client.send(new HeadObjectCommand({
+          Bucket: getR2BucketName(),
+          Key: `${prefix}/${path}`,
+        }))))
+        if (tileHeads.some(tile => !Number.isSafeInteger(tile.ContentLength) || tile.ContentLength < 1 || tile.ContentLength > modelMaxBytes)) {
+          return res.status(400).json({ message: 'Um ou mais níveis de detalhe não existem ou têm um tamanho inválido.' })
+        }
+        const size = manifestHead.ContentLength + tileHeads.reduce((total, tile) => total + tile.ContentLength, 0)
+        if (size > 3 * modelMaxBytes) return res.status(400).json({ message: 'O tileset excede o limite total de 3 GiB.' })
+
+        const previousModel = project.model3d
+        project.model3d = {
+          url: getR2PublicUrl(manifestKey),
+          publicId: prefix,
+          name: name.trim(),
+          format: '3dtiles',
+          size,
+          storage: 'r2',
+        }
+        await project.save()
+        if (previousModel?.storage === 'r2' && previousModel.publicId !== prefix) {
+          await deleteR2ModelAsset(previousModel)
+        }
+        await logActivity(req.auth.sub, '3d-assets-updated', path, project.id)
+        res.json({ item: project })
+      } catch (error) { next(error) }
+    })
+
+    router.post('/:id/3d-assets/tileset/abort', authenticate, authorize(allowedRoles), async (req, res, next) => {
+      try {
+        if (!isR2Configured()) return res.status(503).json({ message: 'Configure o Cloudflare R2 no backend para carregar modelos 3D.' })
+        if (!mongoose.isValidObjectId(req.params.id)
+          || typeof req.body.bundleId !== 'string'
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.body.bundleId)) {
+          return res.status(400).json({ message: 'Sessão de carregamento inválida.' })
+        }
+        const project = await Project.findById(req.params.id).select('model3d.publicId')
+        if (!project) return res.status(404).json({ message: 'Projecto não encontrado.' })
+        const prefix = `arqcons/projects/${project.id}/tilesets/${req.body.bundleId}`
+        if (project.model3d?.publicId === prefix) return res.status(409).json({ message: 'O tileset já está publicado e não pode ser removido nesta sessão.' })
+        await deleteR2Prefix(`${prefix}/`)
+        res.status(204).end()
+      } catch (error) { next(error) }
+    })
+
     router.post('/:id/3d-assets/model-multipart/initiate', authenticate, authorize(allowedRoles), async (req, res, next) => {
       try {
         if (!isR2Configured()) {
@@ -417,7 +604,7 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
             format,
             size,
             chunkSize: modelChunkSize,
-          }, process.env.JWT_SECRET, {
+          }, getJwtSecret(), {
             issuer: 'arqcons-platform',
             audience: 'r2-model-upload',
             expiresIn: modelUploadSessionLifetime / 1000,
@@ -508,13 +695,12 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
           publicId: session.objectKey,
           name: session.name,
           format: session.format,
+          size: session.size,
           storage: 'r2',
         }
         await project.save()
         modelSaved = true
-        if (previousModel?.storage === 'r2' && previousModel.publicId !== session.objectKey) {
-          await client.send(new DeleteObjectCommand({ Bucket: getR2BucketName(), Key: previousModel.publicId }))
-        }
+        if (previousModel?.storage === 'r2' && previousModel.publicId !== session.objectKey) await deleteR2ModelAsset(previousModel)
         await logActivity(req.auth.sub, '3d-assets-updated', path, project.id)
         res.json({ item: project })
       } catch (error) {
@@ -587,6 +773,7 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
           publicId: uploadedAsset.public_id,
           name: name.trim(),
           format,
+          size: uploadedAsset.bytes,
         }
         await project.save()
         await logActivity(req.auth.sub, '3d-assets-updated', path, project.id)
@@ -632,7 +819,7 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
           floorPlanFile ? uploadToCloudinary(floorPlanFile, 'arqcons/projects/floor-plans') : null,
         ])
         const update = {}
-        if (modelAsset) update.$set = { ...update.$set, model3d: { url: modelAsset.url, publicId: modelAsset.publicId, name: modelAsset.name, format: modelFormat } }
+        if (modelAsset) update.$set = { ...update.$set, model3d: { url: modelAsset.url, publicId: modelAsset.publicId, name: modelAsset.name, format: modelFormat, size: modelFile.size } }
         if (planAsset) update.$set = { ...update.$set, floorPlan: planAsset }
         const project = await Project.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true })
         if (!project) return res.status(404).json({ message: 'Projecto não encontrado.' })
