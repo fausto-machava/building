@@ -48,6 +48,21 @@ const mediaSchema = new Schema({
   size: { type: Number, min: 0 },
 }, { _id: false })
 
+const showcaseSceneSchema = new Schema({
+  title: { type: String, required: true, trim: true, maxlength: 120 },
+  description: { type: String, trim: true, maxlength: 1200, default: '' },
+  category: { type: String, enum: ['intro', 'concept', 'construction', 'exterior', 'interior', 'details', 'conclusion'], default: 'concept' },
+  imageUrl: { type: String, required: true, trim: true, maxlength: 2048 },
+  order: { type: Number, min: 0, max: 11, default: 0 },
+  enabled: { type: Boolean, default: true },
+}, { _id: false })
+
+const showcaseSchema = new Schema({
+  enabled: { type: Boolean, default: false },
+  title: { type: String, trim: true, maxlength: 160, default: 'Demonstração do projecto' },
+  scenes: { type: [showcaseSceneSchema], default: [] },
+}, { _id: false })
+
 const quoteRequestSchema = new Schema({
   reference: { type: String, required: true, unique: true, index: true },
   client: { type: Schema.Types.ObjectId, ref: 'Client', required: true, index: true },
@@ -113,6 +128,7 @@ const projectSchema = new Schema({
   },
   floorPlan: mediaSchema,
   gallery: { type: [mediaSchema], default: [] },
+  showcase: { type: showcaseSchema, default: () => ({}) },
   manager: { type: Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true })
 projectSchema.index({ title: 'text', location: 'text', category: 'text' })

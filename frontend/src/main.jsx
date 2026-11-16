@@ -6,6 +6,7 @@ import './assets/styles/global.css'
 import './assets/styles/request-details.css'
 import './assets/styles/project-viewer.css'
 import './assets/styles/branding.css'
+import './assets/styles/image-demonstration.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

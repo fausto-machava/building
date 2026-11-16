@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link, NavLink, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Building2, Check, Eye,
+  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, Building2, Check, Eye,
   ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Compass, FileText,
   FolderKanban, HardHat, ImagePlus, Layers3, LayoutDashboard, LoaderCircle, LockKeyhole,
   LogOut, Mail, MapPin, Menu, MessageSquareText, Phone, Plus, Search, Send,
@@ -12,7 +12,9 @@ import { getTilesetFilePath, uploadProjectTileset } from './services/r2ModelUplo
 import './assets/styles/processing.css'
 
 const RequestChart = lazy(() => import('./components/admin/RequestChart'))
-const ProjectViewer = lazy(() => import('./components/projects/ProjectViewer'))
+const ImageDemonstration = lazy(() => import('./components/image-demo/ImageDemonstration'))
+
+const projectStatusOptions = ['Planeamento', 'Em execução', 'Suspenso', 'Concluído', 'Cancelado']
 
 function Logo({ light = false }) {
   return <Link to="/" className={`brand ${light ? 'brand-light' : ''}`} aria-label="ARQCONS, página inicial"><img className="brand-icon" src="/ico.png" alt="" /><span className="brand-name">ARQCONS<small>D O P R O J E C T O À O B R A</small></span></Link>
@@ -36,8 +38,16 @@ function getProjectPublicationMissingFields(project, hasCoverUpload = false) {
   return [
     !project.title?.trim() && 'nome do projecto',
     !project.category?.trim() && 'categoria',
+    !project.location?.trim() && 'localização',
+    !project.description?.trim() && 'descrição',
     !project.coverImage?.trim() && !hasCoverUpload && 'imagem de capa',
   ].filter(Boolean)
+}
+
+function getDateInputValue(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10)
 }
 
 function ProjectPreview({ project, assets, onClose }) {
@@ -58,9 +68,6 @@ function ProjectPreview({ project, assets, onClose }) {
     ...uploadedAssets.images,
   ]
   const coverImage = uploadedAssets.cover || project.coverImage || images[0]?.url
-  const modelUrl = project.model3d?.url
-  const modelFormat = project.model3d?.format || (project.model3d?.name?.toLowerCase().endsWith('.obj') ? 'obj' : undefined)
-  const floorPlanUrl = project.floorPlan?.url
   const missingFields = getProjectPublicationMissingFields(project, Boolean(assets.coverImage))
 
   return <div className="project-preview-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
@@ -80,9 +87,6 @@ function ProjectPreview({ project, assets, onClose }) {
           <div className="project-preview-details">
             <span className="eyebrow">SOBRE O PROJECTO</span>
             <p>{project.description || 'A descrição do projecto será apresentada aqui.'}</p>
-            <Suspense fallback={<div className="project-loading"><LoaderCircle className="spin" /> A preparar visualização 3D...</div>}>
-              <ProjectViewer modelUrl={modelUrl} modelFormat={modelFormat} modelSize={project.model3d?.size} floorPlanUrl={floorPlanUrl} title={project.title || 'Projecto'} />
-            </Suspense>
             {assets.tileset?.length > 0 && <p className="project-preview-selection">O tileset seleccionado será publicado quando guardar o projecto.</p>}
             {images.length > 0 && <>
               <h4>Imagens do projecto</h4>
@@ -189,8 +193,8 @@ function ProjectDetails() {
     </section>
     <section className="project-detail-content">
       <div className="container">
-        <div className="project-description-grid"><div><span className="eyebrow">CONCEITO DO PROJECTO</span><h2>Desenhado para<br /><em>ser vivido.</em></h2></div><p>{project.description || 'Explore este projecto arquitectónico em 3D. Alterne entre as vistas da planta, exterior e interior e navegue pela cena arrastando o rato ou deslizando no ecrã.'}</p></div>
-        <Suspense fallback={<div className="project-loading"><LoaderCircle className="spin" /> A preparar visualização 3D...</div>}><ProjectViewer modelUrl={project.model3d?.url} modelFormat={project.model3d?.format || (project.model3d?.name?.toLowerCase().endsWith('.obj') ? 'obj' : undefined)} modelSize={project.model3d?.size} floorPlanUrl={project.floorPlan?.url} title={project.title || project.name} /></Suspense>
+        <div className="project-description-grid" id="project-information"><div><span className="eyebrow">CONCEITO DO PROJECTO</span><h2>Desenhado para<br /><em>ser vivido.</em></h2></div><p>{project.description || 'Explore este projecto arquitectónico e conheça as suas diferentes perspectivas.'}</p></div>
+        <Suspense fallback={<div className="image-demonstration"><div className="image-demo-reserved" role="status"><span>A preparar a demonstração de imagens...</span></div></div>}><ImageDemonstration project={project} /></Suspense>
         <section className="property-gallery" aria-labelledby="property-gallery-title">
           <div className="property-gallery-heading"><div><span className="eyebrow">GALERIA DO IMÓVEL</span><h2 id="property-gallery-title">Imagens do projecto</h2></div><span>{galleryImages.length} {galleryImages.length === 1 ? 'imagem' : 'imagens'}</span></div>
           {galleryImages.length > 0
@@ -474,9 +478,12 @@ function ResourcePage({ resource, title, description, user }) {
     projects: [
       ['title', 'Nome do projecto', 'text', true],
       ['category', 'Categoria', 'text', true],
-      ['location', 'Localização', 'text'],
-      ['description', 'Descrição', 'textarea'],
-      ['year', 'Ano', 'number'],
+      ['location', 'Localização', 'text', true],
+      ['description', 'Descrição para apresentação', 'textarea', true],
+      ['year', 'Ano de apresentação', 'number'],
+      ['startDate', 'Data de início', 'date'],
+      ['estimatedCompletion', 'Previsão de conclusão', 'date'],
+      ['status', 'Estado do projecto', 'select'],
     ],
     services: [
       ['name', 'Nome do serviço', 'text', true],
@@ -490,14 +497,22 @@ function ResourcePage({ resource, title, description, user }) {
   function startCreate() {
     setEditingItem(null)
     setProjectPreview(null)
-    setForm({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '', isPublished: false, isFeatured: false })
+    setForm({ name: '', email: '', phone: '', company: '', title: '', category: '', description: '', location: '', service: '', year: '', startDate: '', estimatedCompletion: '', status: 'Planeamento', isPublished: false, isFeatured: false })
     setProjectAssets({ coverImage: null, tileset: [], images: [] })
     setShowForm(true)
   }
   function startEdit(item) {
     setEditingItem(item)
     setProjectPreview(null)
-    setForm({ ...item, year: item.year ?? '', order: item.order ?? '', isPublished: Boolean(item.isPublished), isFeatured: Boolean(item.isFeatured) })
+    setForm({
+      ...item,
+      year: item.year ?? '',
+      startDate: getDateInputValue(item.startDate),
+      estimatedCompletion: getDateInputValue(item.estimatedCompletion),
+      order: item.order ?? '',
+      isPublished: Boolean(item.isPublished),
+      isFeatured: Boolean(item.isFeatured),
+    })
     setProjectAssets({ coverImage: null, tileset: [], images: [] })
     setShowForm(true)
   }
@@ -510,8 +525,12 @@ function ResourcePage({ resource, title, description, user }) {
       setNotice(`Para publicar o projecto, preencha: ${missingProjectFields.join(', ')}.`)
       return
     }
-    if (resource === 'projects' && projectAssets.coverImage?.size > 10 * 1024 * 1024) {
-      setNotice('A imagem de capa não pode exceder 10 MB.')
+    if (resource === 'projects' && [projectAssets.coverImage, ...projectAssets.images].some(image => image?.size > 10 * 1024 * 1024)) {
+      setNotice('Cada imagem pode ter no máximo 10 MB.')
+      return
+    }
+    if (resource === 'projects' && (editingItem?.gallery?.length || 0) + projectAssets.images.length > 20) {
+      setNotice('Cada projecto pode ter no máximo 20 imagens na galeria.')
       return
     }
     setSaving(true); setNotice('')
@@ -530,6 +549,7 @@ function ResourcePage({ resource, title, description, user }) {
     if (resource === 'projects') {
       payload.coverImage = form.coverImage || undefined
       payload.isPublished = Boolean(form.isPublished && (!projectAssets.coverImage || form.coverImage))
+      payload.isFeatured = Boolean(form.isFeatured)
     }
     if (resource === 'quotations') payload.items = [{ description: form.title, quantity: 1, unitPrice: Number(form.amount), subtotal: Number(form.amount) }]
     try {
@@ -547,13 +567,6 @@ function ResourcePage({ resource, title, description, user }) {
           try {
             await api.post(`/projects/${data.item._id}/cover`, cover, { headers: { 'Content-Type': 'multipart/form-data' } })
             coverUploaded = true
-          } catch (reason) {
-            uploadErrors.push(getErrorMessage(reason))
-          }
-        }
-        if (form.isPublished && projectAssets.coverImage && !form.coverImage && coverUploaded) {
-          try {
-            await api.put(`/projects/${data.item._id}`, { isPublished: true })
           } catch (reason) {
             uploadErrors.push(getErrorMessage(reason))
           }
@@ -579,8 +592,15 @@ function ResourcePage({ resource, title, description, user }) {
             uploadErrors.push(getErrorMessage(reason))
           }
         }
+        if (form.isPublished && projectAssets.coverImage && !form.coverImage && coverUploaded) {
+          try {
+            await api.put(`/projects/${data.item._id}`, { isPublished: true })
+          } catch (reason) {
+            uploadErrors.push(getErrorMessage(reason))
+          }
+        }
         if (uploadErrors.length) {
-          successMessage = `Projecto ${editingItem ? 'actualizado' : 'criado'}, mas não foi possível carregar todos os ficheiros. ${uploadErrors.join(' ')}`
+          successMessage = `Projecto ${editingItem ? 'actualizado' : 'criado'}, mas alguns ficheiros não foram carregados. ${uploadErrors.join(' ')}`
         }
       }
       setShowForm(false)
@@ -656,7 +676,7 @@ function ResourcePage({ resource, title, description, user }) {
       )}
       {showForm && (
         <form className="form-card admin-create-form" onSubmit={create} aria-busy={saving}>
-          <h2>{editingItem ? 'Editar registo' : 'Novo registo'}</h2>
+          <h2>{resource === 'projects' ? editingItem ? 'Editar projecto' : 'Novo projecto' : editingItem ? 'Editar registo' : 'Novo registo'}</h2>
           <div className="form-fields">
             {fields.map(([name, label, type, required]) => (
               <label key={name} className={type === 'checkbox' ? 'project-publish-toggle' : undefined}>
@@ -664,7 +684,9 @@ function ResourcePage({ resource, title, description, user }) {
                   ? <>{label}<textarea required={required} value={form[name] || ''} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></>
                   : type === 'checkbox'
                     ? <><input type="checkbox" checked={Boolean(form[name])} onChange={event => setForm(current => ({ ...current, [name]: event.target.checked }))} />{label}</>
-                    : <>{label}<input type={type} required={required} min={type === 'number' ? '0' : undefined} value={form[name] ?? ''} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></>}
+                    : type === 'select'
+                      ? <>{label}<select required={required} value={form[name] || projectStatusOptions[0]} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))}>{projectStatusOptions.map(option => <option key={option} value={option}>{option}</option>)}</select></>
+                    : <>{label}<input type={type} required={required} min={type === 'number' ? name === 'year' ? '1900' : '0' : undefined} max={name === 'year' ? '2200' : undefined} value={type === 'date' ? getDateInputValue(form[name]) : form[name] ?? ''} onChange={event => setForm(current => ({ ...current, [name]: event.target.value }))} /></>}
               </label>
             ))}
           </div>
@@ -704,6 +726,10 @@ function ResourcePage({ resource, title, description, user }) {
                 <input type="checkbox" checked={Boolean(form.isPublished)} onChange={event => setForm(current => ({ ...current, isPublished: event.target.checked }))} />
                 Publicar projecto no portfólio
               </label>
+              <label className="project-publish-toggle">
+                <input type="checkbox" checked={Boolean(form.isFeatured)} onChange={event => setForm(current => ({ ...current, isFeatured: event.target.checked }))} />
+                Destacar projecto no portfólio
+              </label>
               <label>Modelo 3D <span>(seleccione a pasta de streaming/LOD criada a partir do seu ficheiro OBJ ou GLB)</span><input type="file" accept=".json,.glb" webkitdirectory="" directory="" onChange={event => {
                 const files = Array.from(event.target.files || [])
                 const expected = ['tileset.json', 'lod-0.glb', 'lod-1.glb', 'lod-2.glb']
@@ -724,7 +750,12 @@ function ResourcePage({ resource, title, description, user }) {
               }} /></label>
               {projectAssets.tileset.length > 0 && <span className="project-cover-filename">{projectAssets.tileset.length} ficheiros de tileset seleccionados ({(projectAssets.tileset.reduce((total, file) => total + file.size, 0) / 1024 / 1024).toFixed(1)} MiB)</span>}
               {modelUploadProgress !== null && <div className="model-upload-progress" role="status" aria-live="polite"><progress max="100" value={modelUploadProgress} /><span>A enviar modelo 3D: {modelUploadProgress}%</span></div>}
-              <label>Imagens do imóvel <span>(até 10 por vez, JPG, PNG ou WebP; máx. 10 MB cada)</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => { const images = Array.from(event.target.files || []); if (images.length > 10) { setNotice('Seleccione no máximo 10 imagens de cada vez.'); event.target.value = ''; return }; setNotice(''); setProjectAssets(current => ({ ...current, images })) }} /></label>
+              <label>Galeria de imagens <span>(até 10 por envio, 20 no total; JPG, PNG ou WebP, máx. 10 MB cada)</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => { const images = Array.from(event.target.files || []); if (images.length > 10) { setNotice('Seleccione no máximo 10 imagens de cada vez.'); event.target.value = ''; return }; if ((editingItem?.gallery?.length || 0) + images.length > 20) { setNotice('Cada projecto pode ter no máximo 20 imagens na galeria.'); event.target.value = ''; return }; setNotice(''); setProjectAssets(current => ({ ...current, images })) }} /></label>
+              <section className="project-demonstration-info" aria-labelledby="project-demonstration-title">
+                <span className="eyebrow">APRESENTAÇÃO DO IMÓVEL</span>
+                <h3 id="project-demonstration-title">Demonstração em quatro janelas</h3>
+                <p>Esta apresentação reúne a construção da casa, a cozinha, a casa de banho e o espaço exterior. Preencha os dados e carregue a capa e as imagens do projecto no formulário; as quatro janelas aparecem juntas na página pública.</p>
+              </section>
             </div>
           )}
           {resource === 'projects' && form.isPublished && missingProjectFields.length > 0 && <p className="project-preview-warning" role="status">O projecto só será apresentado no website depois de preencher: {missingProjectFields.join(', ')}.</p>}

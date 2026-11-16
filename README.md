@@ -73,7 +73,23 @@ Para evitar que modelos grandes sejam descarregados e descodificados integralmen
 npm run prepare:model:tiles -w platform-backend -- "C:\modelos\edificio.glb" "C:\modelos\edificio-tiles"
 ```
 
-Também são aceites ficheiros OBJ; mantenha os respectivos ficheiros MTL e texturas na mesma pasta do OBJ. A ferramenta cria `tileset.json` e três níveis GLB (`lod-0.glb`, `lod-1.glb`, `lod-2.glb`). No painel de administração, edite o projecto, seleccione a pasta `edificio-tiles` no campo **Modelo 3D para streaming/LOD** e guarde. Os ficheiros são enviados directamente para o R2; o painel valida o índice e só publica o tileset quando os três níveis estão disponíveis. O limite é 1 GiB por ficheiro e 3 GiB no conjunto. O visualizador selecciona o detalhe conforme a distância e mantém uma cache limitada para reduzir o uso de memória.
+Também são aceites ficheiros OBJ. Para preservar materiais e texturas, o OBJ deve referenciar o ficheiro MTL e este deve apontar para as imagens de textura disponíveis junto dos ficheiros do modelo. Um OBJ isolado pode ser convertido, mas não contém os dados de textura; nesse caso, o resultado usa materiais simples. Para ver o interior, o próprio modelo deve incluir a geometria dos compartimentos. A vista **Interior** torna o modelo translúcido para ajudar a inspeccionar essa geometria, mas não cria divisões que não existam no ficheiro. A ferramenta cria `tileset.json` e três níveis GLB (`lod-0.glb`, `lod-1.glb`, `lod-2.glb`). No painel de administração, edite o projecto, seleccione a pasta `edificio-tiles` no campo **Modelo 3D** e guarde. Os ficheiros são enviados directamente para o R2; o painel valida o índice e só publica o tileset quando os três níveis estão disponíveis. O limite é 1 GiB por ficheiro e 3 GiB no conjunto. O visualizador selecciona o detalhe conforme a distância e mantém uma cache limitada para reduzir o uso de memória.
+
+### Demonstração de Imagens
+
+As páginas de projecto incluem numa única secção uma sequência de construção controlada pelo scroll, três configuradores de acabamentos e as etapas de apresentação configuradas para esse projecto. O backend disponibiliza o conteúdo em `GET /api/demo/manifest`; imagens são servidas em `/frames` e `/configurator` com cache imutável. Configure `DEMO_ASSET_BASE_URL` apenas se os assets forem servidos por um domínio diferente do backend.
+
+Para gerar os frames, instale o FFmpeg e coloque um vídeo fonte de 6,25 a 10 segundos em `Backend/source.mp4`; depois execute `npm run frames -- Backend/source.mp4` na raiz. O script produz 150-240 frames WebP a 1920 px em `Backend/public/frames/construction` e a 1080 px em `Backend/public/frames/construction/mobile`, ambos a 24 fps, e actualiza `Backend/public/demo/manifest.json`. O vídeo deve representar a progressão de construção pedida, com enquadramento consistente. O navegador pré-carrega os frames em segundo plano; com movimento reduzido, carrega apenas o frame final.
+
+No formulário do projecto, preencha o nome, categoria, localização, descrição, ano, datas, estado, capa e galeria. Também pode activar e configurar as etapas da demonstração escolhendo as imagens carregadas nesse mesmo formulário; carregamentos novos e etapas são guardados no mesmo envio. O modelo de streaming/LOD continua opcional.
+
+Substitua as imagens dos configuradores mantendo o enquadramento/câmara e os nomes definidos no manifest:
+
+- Cozinha: `Backend/public/configurator/kitchen/natural-oak.webp`, `navy-blue.webp` e `sage-green.webp`.
+- Casa de banho: seis ficheiros `walnut|navy|white` combinados com `gold|black` em `Backend/public/configurator/bathroom`.
+- Quintal: `pool.webp`, `sport-court.webp`, `putting-green.webp` e `garden.webp` em `Backend/public/configurator/backyard`.
+
+Depois de substituir imagens de configurador, incremente `version` no manifest para invalidar a cache imutável. A substituição do vídeo via `npm run frames` actualiza essa versão automaticamente. As imagens dos configuradores são pré-carregadas apenas quando a cena fica próxima; a cena seguinte é preparada antecipadamente.
 
 ### Configuração do Cloudflare R2
 
@@ -101,7 +117,7 @@ Para a lista de acesso de rede do Atlas, permita o acesso de saída do Render co
 ## Funcionalidades incluídas
 
 - Website responsivo em português com páginas institucionais, serviços, portfólio, contactos e formulário de orçamento em etapas.
-- Páginas individuais de projecto com visualizador 3D interactivo, vistas de planta, exterior e interior, suporte a modelos GLB/OBJ e selecção de compartimentos por grupos nomeados no modelo.
+- Páginas individuais de projecto com demonstração cinematográfica de imagens e configuradores interactivos; suporte administrativo a modelos GLB/OBJ e selecção de compartimentos por grupos nomeados no modelo.
 - API REST com autenticação JWT em cookie HttpOnly, papéis de utilizador, limites de tentativas de login, validação, CORS e Helmet.
 - Modelos Mongoose para utilizadores, clientes, serviços, projectos, pedidos de orçamento, propostas, notificações e registo de actividade.
 - Área administrativa com indicadores reais da API, listagens pesquisáveis e operações de gestão de clientes, pedidos, propostas, projectos e serviços; permite adicionar, editar, publicar e remover projectos e serviços apresentados no website, carregar uma imagem de capa ou indicar o seu URL e pré-visualizar o projecto com o seu modelo 3D.

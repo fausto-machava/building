@@ -2,11 +2,15 @@ import 'dotenv/config'
 import express from 'express'
 import mongoose from 'mongoose'
 import helmet from 'helmet'
+import compression from 'compression'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import rateLimit from 'express-rate-limit'
 import multer from 'multer'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import jwt from 'jsonwebtoken'
 import PDFDocument from 'pdfkit'
 import nodemailer from 'nodemailer'
@@ -31,6 +35,8 @@ import { getR2BucketName, getR2Client, getR2PublicUrl, isR2Configured } from './
 const app = express()
 const production = process.env.NODE_ENV === 'production'
 const devFallbackJwtSecret = 'development-secret-key-do-not-use-in-production'
+const publicDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public')
+const demoManifestPath = path.join(publicDirectory, 'demo', 'manifest.json')
 
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET || (production ? undefined : devFallbackJwtSecret)
@@ -77,6 +83,7 @@ app.use((req, res, next) => {
   next()
 })
 app.use(helmet())
+app.use(compression())
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
@@ -84,6 +91,19 @@ app.use(cors({
   },
   credentials: true,
 }))
+const allowCrossOriginDemoAssets = (_req, res, next) => {
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+  next()
+}
+const immutableDemoAssets = {
+  immutable: true,
+  maxAge: '1y',
+  setHeaders(res) {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+  },
+}
+app.use('/frames', allowCrossOriginDemoAssets, express.static(path.join(publicDirectory, 'frames'), immutableDemoAssets))
+app.use('/configurator', allowCrossOriginDemoAssets, express.static(path.join(publicDirectory, 'configurator'), immutableDemoAssets))
 app.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     const origin = req.get('origin')
@@ -227,6 +247,58 @@ function isValidTilesetManifest(tileset) {
     }
   }
   return Number.isFinite(tileset.geometricError) && tileset.geometricError >= tileset.root.geometricError
+}
+
+async function validateProjectShowcase(projectId, showcase) {
+  const allowedCategories = ['intro', 'concept', 'construction', 'exterior', 'interior', 'details', 'conclusion']
+  const allowedKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).every(key => keys.includes(key))
+  if (!allowedKeys(showcase, ['enabled', 'title', 'scenes'])
+    || typeof showcase.enabled !== 'boolean'
+    || typeof showcase.title !== 'string'
+    || showcase.title.trim().length > 160
+    || !Array.isArray(showcase.scenes)
+    || showcase.scenes.length > 12) {
+    return { error: 'Dados da demonstração de imagens inválidos.' }
+  }
+
+  const project = await Project.findById(projectId).select('coverImage gallery')
+  if (!project) return { notFound: true }
+  const allowedImageUrls = new Set([
+    project.coverImage,
+    ...project.gallery.map(image => image.url),
+  ].filter(Boolean))
+  const scenes = []
+  for (const [index, scene] of showcase.scenes.entries()) {
+    if (!allowedKeys(scene, ['title', 'description', 'category', 'imageUrl', 'order', 'enabled'])
+      || typeof scene.title !== 'string' || !scene.title.trim() || scene.title.trim().length > 120
+      || (scene.description !== undefined && (typeof scene.description !== 'string' || scene.description.length > 1200))
+      || !allowedCategories.includes(scene.category)
+      || typeof scene.imageUrl !== 'string' || !allowedImageUrls.has(scene.imageUrl)
+      || !Number.isInteger(scene.order) || scene.order < 0 || scene.order > 11
+      || typeof scene.enabled !== 'boolean') {
+      return { error: `A etapa ${index + 1} da demonstração contém dados inválidos ou uma imagem que não pertence à galeria do projecto.` }
+    }
+    scenes.push({
+      title: scene.title.trim(),
+      description: scene.description?.trim() || '',
+      category: scene.category,
+      imageUrl: scene.imageUrl,
+      order: scene.order,
+      enabled: scene.enabled,
+    })
+  }
+  if (showcase.enabled && !scenes.some(scene => scene.enabled)) {
+    return { error: 'Active pelo menos uma etapa com imagem para publicar a demonstração.' }
+  }
+
+  return {
+    showcase: {
+      enabled: showcase.enabled,
+      title: showcase.title.trim() || 'Demonstração do projecto',
+      scenes,
+    },
+  }
 }
 
 function cookieOptions() {
@@ -416,6 +488,9 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
   router.post('/', authenticate, authorize(allowedRoles), async (req, res, next) => {
     try {
       const payload = { ...req.body }
+      if (Model === Project && payload.showcase !== undefined) {
+        return res.status(400).json({ message: 'A demonstração de imagens será configurada depois de guardar o projecto e carregar as imagens.' })
+      }
       if (Model === Quotation) {
         payload.createdBy = req.auth.sub
         payload.items = (payload.items || []).map(item => ({ ...item, subtotal: Number(item.quantity) * Number(item.unitPrice) }))
@@ -864,6 +939,12 @@ function registerCrud(path, Model, allowedRoles, { searchable = [], archiveField
   router.put('/:id', authenticate, authorize(allowedRoles), async (req, res, next) => {
     try {
       const payload = { ...req.body }
+      if (Model === Project && payload.showcase !== undefined) {
+        const result = await validateProjectShowcase(req.params.id, payload.showcase)
+        if (result.notFound) return res.status(404).json({ message: 'Projecto não encontrado.' })
+        if (result.error) return res.status(400).json({ message: result.error })
+        payload.showcase = result.showcase
+      }
       if (Model === Quotation && Array.isArray(payload.items)) {
         payload.items = payload.items.map(item => ({ ...item, subtotal: Number(item.quantity) * Number(item.unitPrice) }))
         const subtotal = payload.items.reduce((sum, item) => sum + item.subtotal, 0)
@@ -1000,6 +1081,16 @@ app.get('/api/admin/logs', authenticate, authorize(roles.admin), async (req, res
 })
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' }))
+
+app.get('/api/demo/manifest', async (req, res, next) => {
+  try {
+    const manifest = JSON.parse(await readFile(demoManifestPath, 'utf8'))
+    const assetBase = process.env.DEMO_ASSET_BASE_URL || `${req.protocol}://${req.get('host')}`
+    res.json({ ...manifest, assetBase: `${assetBase.replace(/\/+$/, '')}/` })
+  } catch (error) {
+    next(error)
+  }
+})
 
 app.use((error, req, res, _next) => {
   console.error(error)

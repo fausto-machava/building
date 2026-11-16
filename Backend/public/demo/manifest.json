@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "totalFrames": 0,
+  "frameRate": 24,
+  "frames": {
+    "desktop": "/frames/construction/frame_{frame}.webp?v={version}",
+    "mobile": "/frames/construction/mobile/frame_{frame}.webp?v={version}"
+  },
+  "stages": [
+    { "start": 0, "lead": "A planta", "accent": "do projecto.", "description": "Toda casa começa com uma ideia clara, pensada para a forma como pretende viver." },
+    { "start": 0.08, "lead": "Implantação", "accent": "no terreno.", "description": "O desenho sai do papel e ganha lugar, com a marcação da casa no terreno." },
+    { "start": 0.2, "lead": "Fundação", "accent": "sólida.", "description": "Uma fundação preparada com rigor cria uma base resistente e duradoura." },
+    { "start": 0.32, "lead": "As paredes", "accent": "ganham forma.", "description": "A planta transforma-se em espaço quando as primeiras paredes são erguidas." },
+    { "start": 0.44, "lead": "Estrutura", "accent": "completa.", "description": "A estrutura revela os espaços, as proporções e a identidade da casa." },
+    { "start": 0.54, "lead": "Revestimento", "accent": "estrutural.", "description": "O revestimento reforça a estrutura e prepara a casa para os acabamentos exteriores." },
+    { "start": 0.64, "lead": "Protegida", "accent": "das intempéries.", "description": "A barreira de protecção resguarda a casa enquanto a obra avança." },
+    { "start": 0.74, "lead": "Tijolo", "accent": "a tijolo.", "description": "Os detalhes de alvenaria acrescentam textura, resistência e carácter." },
+    { "start": 0.84, "lead": "Exterior", "accent": "concluído.", "description": "Os acabamentos exteriores dão vida à visão arquitectónica." },
+    { "start": 0.93, "lead": "Os últimos", "accent": "detalhes.", "description": "O jardim, a entrada e os acabamentos finais transformam a casa num lar." }
+  ],
+  "configuratorScenes": [
+    {
+      "id": "kitchen",
+      "title": "Personalize a sua cozinha.",
+      "description": "Escolha um acabamento que faça da cozinha um espaço seu.",
+      "options": [
+        { "id": "natural-oak", "label": "Carvalho natural", "swatch": "#b88b5d", "src": "/configurator/kitchen/natural-oak.webp" },
+        { "id": "navy-blue", "label": "Azul-marinho", "swatch": "#233d59", "src": "/configurator/kitchen/navy-blue.webp" },
+        { "id": "sage-green", "label": "Verde-sálvia", "swatch": "#87917a", "src": "/configurator/kitchen/sage-green.webp" }
+      ]
+    },
+    {
+      "id": "bathroom",
+      "title": "Escolha o seu refúgio.",
+      "description": "Combine o acabamento do lavatório com ferragens ao seu gosto.",
+      "options": [
+        {
+          "id": "walnut", "label": "Nogueira", "swatch": "#704a35",
+          "variants": { "gold": "/configurator/bathroom/walnut-gold.webp", "black": "/configurator/bathroom/walnut-black.webp" }
+        },
+        {
+          "id": "navy", "label": "Azul-marinho", "swatch": "#243b52",
+          "variants": { "gold": "/configurator/bathroom/navy-gold.webp", "black": "/configurator/bathroom/navy-black.webp" }
+        },
+        {
+          "id": "white", "label": "Branco", "swatch": "#ecebe5",
+          "variants": { "gold": "/configurator/bathroom/white-gold.webp", "black": "/configurator/bathroom/white-black.webp" }
+        }
+      ],
+      "hardwareOptions": [
+        { "id": "gold", "label": "Dourado", "swatch": "#c5a36d" },
+        { "id": "black", "label": "Preto mate", "swatch": "#252525" }
+      ]
+    },
+    {
+      "id": "backyard",
+      "title": "Crie o seu espaço exterior.",
+      "description": "Escolha como aproveitar o espaço ao ar livre.",
+      "options": [
+        { "id": "pool", "label": "Piscina", "icon": "P", "src": "/configurator/backyard/pool.webp" },
+        { "id": "sport-court", "label": "Campo desportivo", "icon": "D", "src": "/configurator/backyard/sport-court.webp" },
+        { "id": "putting-green", "label": "Mini-golfe", "icon": "G", "src": "/configurator/backyard/putting-green.webp" },
+        { "id": "garden", "label": "Jardim", "icon": "J", "src": "/configurator/backyard/garden.webp" }
+      ]
+    }
+  ]
+}
